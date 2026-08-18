@@ -99,6 +99,19 @@ button.ghost { background: transparent; }
   font-weight: 700;
 }
 
+.params { margin: 18px 0 0; border-top: 1px solid var(--edge); padding-top: 14px; }
+.params summary { cursor: pointer; color: var(--muted); font-size: 12px; letter-spacing: 0.14em; }
+.params-grid { display: grid; gap: 16px; margin: 16px 0 4px; }
+.param-field { display: grid; gap: 6px; }
+.param-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.param-label { font-size: 13px; color: var(--text); }
+.param-value { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.param-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--blood);
+}
+.params-reset { width: 100%; margin-top: 4px; font-size: 12px; }
+
 .start { margin-top: 10px; }
 
 .rules { margin-top: 24px; border-top: 1px solid var(--edge); padding-top: 16px; }
