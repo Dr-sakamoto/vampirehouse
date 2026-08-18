@@ -349,6 +349,100 @@ button.ghost { background: transparent; }
 .log-bad { color: #ffb0b8; }
 .log-warn { color: #ffd9a0; }
 
+/* ------------------------------------------------------------ 盤面調整モード */
+
+.calibrate-link { margin-top: 8px; width: 100%; font-size: 12.5px; color: var(--muted); }
+
+.calibrate-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 20px;
+  padding: 20px;
+  min-height: 100vh;
+  align-items: start;
+}
+
+.calibrate-stage {
+  position: sticky;
+  top: 20px;
+  display: grid;
+  place-items: center;
+}
+
+.calibrate-board {
+  width: 100%;
+  max-width: min(82vh, 100%);
+  height: auto;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.55);
+  touch-action: none;
+  user-select: none;
+}
+
+.calibrate-side {
+  background: var(--night-1);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.calibrate-side h1 { font-size: 18px; margin: 0 0 4px; }
+.calibrate-help { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.calibrate-saved { color: var(--shade); }
+
+.calibrate-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.calibrate-legend li { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.calibrate-legend i {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--dot); display: inline-block;
+  border: 1px solid rgb(255 255 255 / 0.4);
+}
+
+.calibrate-handles-help { margin: 0; font-size: 12px; color: var(--muted); }
+.calibrate-handles-help dt { font-weight: 700; color: var(--text); margin-top: 6px; }
+.calibrate-handles-help dd { margin: 0 0 0 0; }
+
+.calibrate-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+
+.calibrate-raw { font-size: 12px; }
+.calibrate-raw summary { cursor: pointer; color: var(--muted); }
+.calibrate-raw pre {
+  margin: 8px 0 0;
+  padding: 8px;
+  background: var(--night-2);
+  border-radius: 8px;
+  font-size: 11px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* --- 盤面調整: リング --- */
+
+.ring-line { fill: none; stroke: #ffffff; stroke-width: 2.5; stroke-opacity: 0.7; }
+.ring-line.ring-hunter { stroke: var(--hunter); stroke-width: 3.5; stroke-opacity: 0.9; }
+
+/* --- 盤面調整: 役割ごとのポインター --- */
+
+.role-dot { stroke: #14131a; stroke-width: 2; pointer-events: none; }
+.role-village { fill: #e63946; }
+.role-castle { fill: #3d7fb3; }
+.role-cave { fill: #a15fc4; }
+.role-shade { fill: #35c2e6; }
+.role-plain { fill: #e8e2d0; }
+
+/* --- 盤面調整: ドラッグ用ハンドル --- */
+
+.handle { cursor: grab; stroke: #14131a; stroke-width: 2.5; fill-opacity: 0.95; touch-action: none; }
+.handle:active { cursor: grabbing; }
+.handle-center { fill: #ffffff; r: 15; }
+.handle-ring { fill: #ffffff; }
+.handle-rotation { fill: #ffffff; }
+.handle-castle { fill: #3d7fb3; }
+
 /* ------------------------------------------------------------ 狭い画面 */
 
 @media (max-width: 1000px) {
@@ -356,4 +450,8 @@ button.ghost { background: transparent; }
   .stage { position: static; }
   .board { max-width: min(92vw, 620px); }
   .log { max-height: 180px; }
+
+  .calibrate-wrap { grid-template-columns: 1fr; }
+  .calibrate-stage { position: static; }
+  .calibrate-board { max-width: min(92vw, 620px); }
 }

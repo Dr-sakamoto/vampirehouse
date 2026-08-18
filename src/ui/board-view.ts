@@ -1,4 +1,3 @@
-import { CASTLE_RING } from '../game/board';
 import {
   currentPlayer,
   hunterNextCell,
@@ -8,16 +7,13 @@ import {
 } from '../game/rules';
 import type { GameState } from '../game/types';
 import boardUrl from '../assets/board.png';
+import { getCalibration } from './calibration';
 import {
-  CASTLE_HIT_RADIUS,
-  CENTER,
   IMAGE_HEIGHT,
   IMAGE_WIDTH,
-  RING_RADII,
-  VILLAGE_RADIUS,
   cellCenter,
+  cellHitRadius,
   sectorAngle,
-  sectorPath,
   trianglePath,
 } from './geometry';
 
@@ -38,8 +34,10 @@ export interface BoardViewOptions {
 
 /**
  * 盤面はユーザーが渡した写真そのものを背景として敷き、
- * その上に透明な当たり判定と、状態を示す半透明のハイライトだけを重ねる。
+ * その上に「役割ごとのポインター」――マスの中心に置いた円――だけを重ねる。
  * 石畳やお城の絵を描き起こすようなことはしない ―― 絵は写真に任せる。
+ * ポインターの座標は calibration.ts から読む。盤面のずれは、対局画面ではなく
+ * 盤面調整モードで直す。
  */
 export class BoardView {
   readonly svg: SVGSVGElement;
@@ -47,7 +45,7 @@ export class BoardView {
   private readonly ghostLayer = el('g', { class: 'layer-ghosts' });
   private readonly markerLayer = el('g', { class: 'layer-markers' });
   private readonly pieceLayer = el('g', { class: 'layer-pieces' });
-  private readonly stateNodes = new Map<string, SVGPathElement | SVGCircleElement>();
+  private readonly stateNodes = new Map<string, SVGCircleElement>();
   private built = false;
 
   constructor(private readonly options: BoardViewOptions) {
@@ -69,24 +67,17 @@ export class BoardView {
   }
 
   /**
-   * 各マスにつき1つの要素だけを置く。クリック判定と、合法手/危険などの
-   * 半透明ハイライトを同じ要素が兼ねる ―― 見えるものと押せるものを分けない。
+   * 各マスにつき円1つだけを置く。クリック判定と、合法手/危険などの
+   * 半透明ハイライトを同じ円が兼ねる ―― 見えるものと押せるものを分けない。
+   * 位置と大きさは calibration.ts の現在値から計算する。
    */
   private build(state: GameState): void {
     const { board } = state;
 
     for (const id of board.order) {
       const cell = board.cells[id];
-      let node: SVGPathElement | SVGCircleElement;
-      if (cell.ring === 0) {
-        const c = cellCenter(cell);
-        node = el('circle', { cx: c.x, cy: c.y, r: VILLAGE_RADIUS + 4 });
-      } else if (cell.ring === CASTLE_RING) {
-        const c = cellCenter(cell);
-        node = el('circle', { cx: c.x, cy: c.y, r: CASTLE_HIT_RADIUS });
-      } else {
-        node = el('path', { d: sectorPath(cell.ring, cell.sector) });
-      }
+      const c = cellCenter(cell);
+      const node = el('circle', { cx: c.x, cy: c.y, r: cellHitRadius(cell) });
       node.setAttribute('class', 'state');
       node.dataset.cell = id;
       node.addEventListener('click', () => this.options.onCellClick(id));
@@ -205,9 +196,10 @@ export class BoardView {
 
   /** 夜明けの閃光 */
   flashDawn(): void {
+    const { center } = getCalibration();
     const flash = el('circle', {
-      cx: CENTER.x,
-      cy: CENTER.y,
+      cx: center.x,
+      cy: center.y,
       r: Math.max(IMAGE_WIDTH, IMAGE_HEIGHT),
       class: 'dawn-flash',
     });
@@ -219,5 +211,3 @@ export class BoardView {
 export function highlightFor(state: GameState): string[] {
   return legalMoves(state);
 }
-
-export { RING_RADII };
