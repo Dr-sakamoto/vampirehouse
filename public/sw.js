@@ -1,10 +1,26 @@
 // オフライン対応のためのService Worker。
-// ビルドごとに増えるハッシュ付きファイル名を追跡する代わりに、
-// 実際にアクセスしたリソースをその場でキャッシュしていく方式（ランタイムキャッシュ）を採る。
-const CACHE_NAME = 'vampirehouse-v1';
+// ビルドごとに増えるハッシュ付きファイル名を事前にリストアップする代わりに、
+// installの時点でindex.htmlを取得してそこから参照されているJS/CSSを読み取り、
+// アプリ本体一式（アプリシェル）を先読みキャッシュしておく。
+// それ以外のリソース（盤面画像など）はアクセスされた時点でランタイムキャッシュする。
+const CACHE_NAME = 'vampirehouse-v2';
+const APP_SHELL = ['./', './index.html', './manifest.webmanifest'];
 
-self.addEventListener('install', () => {
-  self.skipWaiting();
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.addAll(APP_SHELL);
+      try {
+        const html = await (await cache.match('./index.html')).text();
+        const assetPaths = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map((m) => m[1]);
+        await Promise.all(assetPaths.map((path) => cache.add(path).catch(() => {})));
+      } catch {
+        // index.htmlの解析に失敗しても、ランタイムキャッシュでフォールバックできるので致命的ではない
+      }
+      self.skipWaiting();
+    })()
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -31,13 +47,20 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           return response;
         })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match('./index.html')))
+        .catch(() =>
+          caches
+            .match(request, { ignoreVary: true })
+            .then((cached) => cached || caches.match('./index.html', { ignoreVary: true }))
+        )
     );
     return;
   }
 
+  // <script crossorigin>タグ等はOriginヘッダー付きのリクエストになり、
+  // installでの先読みキャッシュ時（Originヘッダーなし）と`Vary: Origin`が食い違ってマッチしないことがあるため、
+  // Varyヘッダーは無視して同一URLならヒットさせる
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.match(request, { ignoreVary: true }).then((cached) => {
       const network = fetch(request)
         .then((response) => {
           if (response && response.ok) {
