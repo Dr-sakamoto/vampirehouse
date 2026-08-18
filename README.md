@@ -40,6 +40,9 @@ npm run dev      # http://localhost:5173
 
 2〜4人のホットシート対戦に対応。空いた席はボットが埋める（全席ボットの観戦も可能）。
 
+PWA対応。スマホのブラウザで開いて「ホーム画面に追加」すればアプリのように起動でき、
+一度開いたページはオフラインでも遊べる（`public/manifest.webmanifest` と `public/sw.js`）。
+
 ルールの詳細と、企画段階で未決定だった項目をどう確定させたかは
 [`docs/design.md`](docs/design.md) にまとめてある。
 
