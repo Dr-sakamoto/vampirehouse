@@ -130,59 +130,49 @@ button.ghost { background: transparent; }
   width: 100%;
   max-width: min(78vh, 100%);
   height: auto;
-  background: var(--paper);
-  border-radius: 20px;
+  border-radius: 14px;
   box-shadow: 0 24px 70px rgb(0 0 0 / 0.55);
   user-select: none;
 }
 
-/* --- マス --- */
+/* 盤面の絵はユーザーが渡した写真そのもの。ここでは描かない */
+.board-photo { pointer-events: none; }
 
-.cell { fill: transparent; stroke: none; cursor: default; }
-.cell-cave { fill: var(--cave); fill-opacity: 0.82; }
-.cell-shade { fill: var(--shade); fill-opacity: 0.82; }
-.cell-village { fill: var(--blood); }
-.cell-castle { fill: #dedbd2; }
+/* --- 当たり判定と状態表示。1マス1要素が両方を兼ねる --- */
 
-.cell.is-blocked { fill: #cfcbc0; }
+.state { fill: transparent; stroke: none; cursor: default; }
+.state.is-clickable { cursor: pointer; }
 
-/* ハンターの現在地と次の一歩は、マスの色を潰さずに縁取りで示す */
-.cell.is-danger {
+.state.is-blocked { fill: #000; fill-opacity: 0.16; }
+
+/* ハンターの現在地と次の一歩は、写真の絵を潰さず縁取りだけで示す */
+.state.is-danger {
   stroke: #c98f00;
   stroke-width: 7;
   stroke-dasharray: 12 9;
-  stroke-opacity: 0.9;
+  stroke-opacity: 0.85;
 }
-.cell.is-hunter { stroke: #a86b00; stroke-width: 8; stroke-opacity: 0.95; }
+.state.is-hunter { stroke: #a86b00; stroke-width: 8; stroke-opacity: 0.9; }
 
-.cell.is-doomed:not(.cell-shade):not(.cell-castle) {
-  fill: var(--sun);
-  fill-opacity: 0.16;
-}
+.state.is-doomed { fill: var(--sun); fill-opacity: 0.22; }
 
-.cell.is-shroud {
-  fill: #6b4fd8;
-  fill-opacity: 0.42;
-}
+.state.is-shroud { fill: #6b4fd8; fill-opacity: 0.4; }
 
-/* 進める先。ハンターの縁取りより優先して見せる */
-.cell.is-legal {
-  cursor: pointer;
+/* 進める先。写真の上から白く光らせるだけ */
+.state.is-legal {
   stroke: #1c1a24;
   stroke-width: 6;
-  stroke-dasharray: none;
-  stroke-opacity: 1;
+  fill: #ffffff;
+  fill-opacity: 0.38;
   animation: pulse 1.7s ease-in-out infinite;
 }
-.cell.is-legal:hover { fill: #ffffff; fill-opacity: 0.92; }
-.cell.is-legal.cell-plain { fill: #ffe9a8; }
+.state.is-legal:hover { fill-opacity: 0.68; }
 
-.cell.is-target {
-  cursor: pointer;
+.state.is-target {
   stroke: #6b4fd8;
   stroke-width: 6;
   fill: #b39dff;
-  fill-opacity: 0.55;
+  fill-opacity: 0.5;
 }
 
 @keyframes pulse {
@@ -190,37 +180,14 @@ button.ghost { background: transparent; }
   50% { stroke-opacity: 1; }
 }
 
-/* --- インクの線 --- */
+/* --- ハンター。写真の金の三角と同じ色調の、動く駒 --- */
 
-.ink-ring, .ink-spoke, .ink-bridge, .ink-castle {
-  fill: none;
-  stroke: var(--ink);
-  stroke-linecap: round;
-}
-.ink-ring { stroke-width: 2.4; }
-.ink-spoke { stroke-width: 1.8; }
-.ink-bridge { stroke-width: 5; }
-.ink-castle { stroke-width: 6; }
-
-.glyph {
-  font-size: 22px;
-  font-weight: 700;
-  fill: var(--ink);
-  fill-opacity: 0.5;
-  pointer-events: none;
-}
-.glyph-village { font-size: 30px; fill: var(--paper); fill-opacity: 0.95; }
-.glyph-castle { font-size: 26px; fill-opacity: 0.6; }
-
-/* --- ハンター --- */
-
-.hunter-body { fill: var(--hunter); stroke: var(--ink); stroke-width: 5; stroke-linejoin: round; }
-.hunter-eye { fill: var(--shade); }
+.hunter-body { fill: var(--hunter); stroke: #4a3a10; stroke-width: 4; stroke-linejoin: round; }
 .hunter-ghost {
   fill: var(--hunter);
-  fill-opacity: 0.3;
-  stroke: #a86b00;
-  stroke-opacity: 0.55;
+  fill-opacity: 0.28;
+  stroke: #4a3a10;
+  stroke-opacity: 0.5;
   stroke-width: 3;
   stroke-dasharray: 7 6;
   stroke-linejoin: round;
