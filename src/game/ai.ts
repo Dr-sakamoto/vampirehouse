@@ -1,0 +1,333 @@
+import { VILLAGE, cellId, wrapSector } from './board';
+import {
+  batPlayError,
+  currentPlayer,
+  endTurn,
+  hunterCells,
+  hunterNextCell,
+  isFinalNight,
+  isSafeCell,
+  legalMoves,
+  moveAllowance,
+  moveTo,
+  playBat,
+  roundsUntilDawn,
+  stealTargets,
+  flightTargets,
+  castleOf,
+} from './rules';
+import type { BatKind, GameState, Player } from './types';
+
+/** 欲張りの上限。これ以上は抱え込まない */
+const GREED_CAP = 3;
+
+function findBat(player: Player, kind: BatKind): string | null {
+  return player.bats.find((b) => b.kind === kind)?.uid ?? null;
+}
+
+/** 今このラウンドでハンターが居る／来るマス */
+function dangerCells(state: GameState): Set<string> {
+  const set = new Set<string>();
+  for (const h of state.hunters) {
+    set.add(cellId(h.ring, h.sector));
+    set.add(hunterNextCell(h));
+  }
+  return set;
+}
+
+/** 侵入できないマス（他人の城・埋まった日陰） */
+function blockedCells(state: GameState, me: Player): Set<string> {
+  const set = new Set<string>();
+  for (const id of state.board.order) {
+    const cell = state.board.cells[id];
+    if (cell.kind === 'castle' && cell.castleOf !== me.index) set.add(id);
+  }
+  for (const p of state.players) {
+    if (p.index !== me.index && state.board.cells[p.at].kind === 'shade') set.add(p.at);
+  }
+  return set;
+}
+
+/** avoid を避けた最短経路（from を含む）。無ければ null */
+function safePath(
+  state: GameState,
+  from: string,
+  to: string,
+  avoid: Set<string>,
+): string[] | null {
+  if (from === to) return [from];
+  const prev: Record<string, string> = {};
+  const seen = new Set([from]);
+  const queue = [from];
+  for (let head = 0; head < queue.length; head++) {
+    const id = queue[head];
+    for (const n of state.board.cells[id].neighbors) {
+      if (seen.has(n) || avoid.has(n)) continue;
+      seen.add(n);
+      prev[n] = id;
+      if (n === to) {
+        const path = [to];
+        let cur = to;
+        while (cur !== from) {
+          cur = prev[cur];
+          path.unshift(cur);
+        }
+        return path;
+      }
+      queue.push(n);
+    }
+  }
+  return null;
+}
+
+/** ハンターを避けた経路を優先し、無ければ現在位置のハンターだけ避ける */
+function routeTo(state: GameState, me: Player, target: string): string[] | null {
+  const blocked = blockedCells(state, me);
+  const cautious = new Set([...blocked, ...dangerCells(state)]);
+  const path = safePath(state, me.at, target, cautious);
+  if (path) return path;
+  const minimal = new Set([...blocked, ...hunterCells(state)]);
+  return safePath(state, me.at, target, minimal);
+}
+
+function pathCost(path: string[] | null): number {
+  return path === null ? Number.POSITIVE_INFINITY : path.length - 1;
+}
+
+/**
+ * 血を抱えたまま朝を迎えられる、最も近いマス。
+ * 深部リングの日陰はハンターの巡回路と重なっているので、
+ * 次のラウンドに踏まれるマスは避難先から除外する。
+ */
+function nearestRefuge(
+  state: GameState,
+  me: Player,
+  from: string = me.at,
+): { cell: string; cost: number } | null {
+  const danger = dangerCells(state);
+  const blocked = blockedCells(state, me);
+  const candidates = [castleOf(state.board, me.index), ...state.board.shadeCells];
+  let best: { cell: string; cost: number } | null = null;
+  for (const cell of candidates) {
+    if (!isSafeCell(state, me, cell)) continue;
+    if (blocked.has(cell)) continue;
+    if (from === me.at && danger.has(cell)) continue;
+    const cost =
+      from === me.at
+        ? pathCost(routeTo(state, me, cell))
+        : pathCost(safePath(state, from, cell, blocked));
+    if (cost === Number.POSITIVE_INFINITY) continue;
+    if (!best || cost < best.cost) best = { cell, cost };
+  }
+  return best;
+}
+
+/** steps 歩を、今の残り移動力とその後の移動力で何ターンかけて踏破できるか */
+function turnsToCover(steps: number, movesNow: number, allowance: number): number {
+  if (steps <= movesNow) return 1;
+  return 1 + Math.ceil((steps - movesNow) / Math.max(1, allowance));
+}
+
+/** まだ採られていない洞窟のうち、村への道からの寄り道が1歩で済むもの */
+function cheapCaveDetour(state: GameState, me: Player, directCost: number): string | null {
+  let best: { cell: string; extra: number } | null = null;
+  for (const cave of state.board.caveCells) {
+    if (state.cavesLooted.includes(cave)) continue;
+    const toCave = pathCost(routeTo(state, me, cave));
+    if (toCave === Number.POSITIVE_INFINITY) continue;
+    const caveToVillage = pathCost(safePath(state, cave, VILLAGE, blockedCells(state, me)));
+    const extra = toCave + caveToVillage - directCost;
+    if (extra > 1) continue;
+    if (!best || extra < best.extra) best = { cell: cave, extra };
+  }
+  return best?.cell ?? null;
+}
+
+/** 誘導カードで血を持った相手を仕留められるなら、その手を返す */
+function findLureKill(state: GameState): { hunter: string; dir: 1 | -1 } | null {
+  const me = currentPlayer(state);
+  for (const hunter of state.hunters) {
+    for (const dir of [1, -1] as const) {
+      const cell = cellId(hunter.ring, wrapSector(hunter.sector + dir));
+      const victim = state.players.find((p) => p.index !== me.index && p.at === cell);
+      if (victim && victim.carrying > 0) return { hunter: hunter.id, dir };
+    }
+  }
+  return null;
+}
+
+/** 経路に沿って、進めるところまで進む */
+function walk(state: GameState, path: string[]): void {
+  for (const step of path.slice(1)) {
+    const me = currentPlayer(state);
+    if (me.movesLeft <= 0) break;
+    if (!legalMoves(state).includes(step)) break;
+    const before = me.at;
+    moveTo(state, step);
+    // ハンターに討たれて城へ戻された
+    if (currentPlayer(state).at !== step && currentPlayer(state).at !== before) break;
+  }
+}
+
+/**
+ * 立ち止まる場所がハンターの進路上なら、余った移動力で一歩ずらす。
+ * ハンターは自分の手番のあとに動くので、居座りは轢かれることを意味する。
+ */
+function stepOffPatrolPath(state: GameState): void {
+  const me = currentPlayer(state);
+  if (me.movesLeft <= 0) return;
+  const danger = dangerCells(state);
+  if (!danger.has(me.at)) return;
+  const escapes = legalMoves(state).filter((id) => !danger.has(id));
+  if (escapes.length === 0) return;
+  // 逃げ先は「安全なマス」を優先する
+  const refuge = escapes.find((id) => isSafeCell(state, me, id));
+  moveTo(state, refuge ?? escapes[0]);
+}
+
+/** ボット1人ぶんの手番をすべて処理し、ターンを終える */
+export function botTakeTurn(state: GameState): void {
+  if (state.phase !== 'playing') return;
+  const me = currentPlayer(state);
+  const lastRoundOfNight = roundsUntilDawn(state) === 1;
+
+  // --- 手番開始時のカード ---
+  const lure = findLureKill(state);
+  if (lure && findBat(me, 'lure') && batPlayError(state, 'lure') === null) {
+    playBat(state, findBat(me, 'lure')!, lure);
+  }
+
+  const homeCost = pathCost(routeTo(state, me, castleOf(state.board, me.index)));
+  const stealUid = findBat(me, 'steal');
+  if (
+    stealUid &&
+    batPlayError(state, 'steal') === null &&
+    stealTargets(state).length > 0 &&
+    homeCost <= me.movesLeft
+  ) {
+    // このターンで持ち帰れるなら、奪った血はそのまま得点になる
+    playBat(state, stealUid, { player: stealTargets(state)[0] });
+  }
+
+  // --- 行き先を決める ---
+  const target = chooseTarget(state, lastRoundOfNight);
+
+  if (target !== null) {
+    let path = routeTo(state, me, target);
+    const dashUid = findBat(me, 'dash');
+    // あと2歩で届くなら疾走を切る価値がある
+    if (
+      dashUid &&
+      batPlayError(state, 'dash') === null &&
+      path &&
+      pathCost(path) > me.movesLeft &&
+      pathCost(path) <= me.movesLeft + 2 &&
+      (me.carrying > 0 || lastRoundOfNight)
+    ) {
+      playBat(state, dashUid);
+      path = routeTo(state, currentPlayer(state), target);
+    }
+    if (path) walk(state, path);
+  }
+  stepOffPatrolPath(state);
+
+  // --- 朝が来る前の保険（最終夜は隠れても加点されないので使わない） ---
+  if (lastRoundOfNight && !isFinalNight(state)) {
+    const now = currentPlayer(state);
+    if (!isSafeCell(state, now, now.at)) {
+      const flightUid = findBat(now, 'flight');
+      if (flightUid && batPlayError(state, 'flight') === null && flightTargets(state).length > 0) {
+        playBat(state, flightUid, { cell: flightTargets(state)[0] });
+      }
+    }
+    const after = currentPlayer(state);
+    const shroudUid = findBat(after, 'shroud');
+    if (!isSafeCell(state, after, after.at) && shroudUid && batPlayError(state, 'shroud') === null) {
+      playBat(state, shroudUid);
+    }
+  }
+
+  endTurn(state);
+}
+
+function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | null {
+  const me = currentPlayer(state);
+  const home = castleOf(state.board, me.index);
+  const allowance = moveAllowance(state, me);
+  const turnsAfterThis = Math.max(0, roundsUntilDawn(state) - 1);
+  const nightBudget = me.movesLeft + turnsAfterThis * allowance;
+
+  // 最終夜の夜明けを越えても得点は増えない。日陰に隠れる意味はもう無い
+  const finalDawn = lastRoundOfNight && isFinalNight(state);
+
+  // 最後のラウンド: 今このターンで安全圏に入らないと灰になる
+  if (lastRoundOfNight) {
+    if (me.at === home) return null;
+    const homeCost = pathCost(routeTo(state, me, home));
+    if (homeCost <= me.movesLeft) return home;
+    if (finalDawn) return home; // 届かなくても構わない。持ったままでは0点なのだから
+    const refuge = nearestRefuge(state, me);
+    if (refuge && refuge.cost <= me.movesLeft) return refuge.cell;
+    // どこにも間に合わない。せめて城に近づいておく
+    return home;
+  }
+
+  // 村に立っている: もう1つ吸うか、引き上げるか
+  if (me.at === VILLAGE) {
+    const futureCarry = me.carrying + (state.bloodPool > 0 ? 1 : 0);
+    const futureAllowance = Math.max(1, state.config.baseMove - Math.floor(futureCarry / 2));
+    const budgetAfterStaying = turnsAfterThis * futureAllowance;
+    const homeCost = pathCost(routeTo(state, me, home));
+    const refuge = nearestRefuge(state, me);
+    // 最終夜は「生き延びる」では足りない。城まで戻れる見込みが要る
+    const canEscapeLater = isFinalNight(state)
+      ? homeCost <= budgetAfterStaying
+      : homeCost <= budgetAfterStaying ||
+        (refuge !== null && refuge.cost <= budgetAfterStaying);
+    if (state.bloodPool > 0 && futureCarry <= GREED_CAP && canEscapeLater) return null;
+    return home;
+  }
+
+  // 血を抱えている: 帰れるうちに帰る
+  if (me.carrying > 0) {
+    const homeCost = pathCost(routeTo(state, me, home));
+    if (homeCost <= nightBudget) return home;
+    if (isFinalNight(state)) return home; // 夜を越す先がもう無い
+    const refuge = nearestRefuge(state, me);
+    if (refuge && refuge.cost <= nightBudget) return refuge.cell;
+    return home;
+  }
+
+  // 手ぶら: 村を目指す。ただし朝までに逃げ込める見込みがある時だけ
+  const villageCost = pathCost(routeTo(state, me, VILLAGE));
+  if (villageCost === Number.POSITIVE_INFINITY) return home;
+  if (state.bloodPool <= 0) {
+    // 血が尽きているなら安全に朝を待つ
+    const refuge = nearestRefuge(state, me);
+    return refuge ? refuge.cell : home;
+  }
+  if (villageCost > nightBudget) {
+    // 今夜は村まで届かない。日陰で夜を越して次の夜に賭ける
+    const refuge = nearestRefuge(state, me);
+    if (refuge && refuge.cost <= nightBudget) return refuge.cell;
+  }
+  // 村へ着いてから朝までに逃げ切れないなら、そもそも行かない。
+  // 「欲張るほど帰りが遠い」を、出発の時点で計算しておく。
+  const turnsToVillage = turnsToCover(villageCost, me.movesLeft, allowance);
+  const turnsAfterVillage = roundsUntilDawn(state) - turnsToVillage;
+  const carryAllowance = Math.max(1, state.config.baseMove - Math.floor(1 / 2));
+  const escape = nearestRefuge(state, me, VILLAGE);
+  const canEscapeFromVillage =
+    turnsAfterVillage >= 0 &&
+    escape !== null &&
+    escape.cost <= turnsAfterVillage * carryAllowance;
+  if (!canEscapeFromVillage) {
+    const refuge = nearestRefuge(state, me);
+    if (refuge && refuge.cost <= nightBudget) return refuge.cell;
+    return home;
+  }
+
+  const cave = cheapCaveDetour(state, me, villageCost);
+  if (cave && me.bats.length < 3) return cave;
+  return VILLAGE;
+}

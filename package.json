@@ -1,0 +1,21 @@
+{
+  "name": "vampirehouse",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "ヴァンパイア・ハウス — 同心円ボード上のチキンレース×リソース管理ボードゲーム",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "balance": "vite-node scripts/balance.ts"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4"
+  }
+}

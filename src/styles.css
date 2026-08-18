@@ -1,0 +1,392 @@
+/* ヴァンパイア・ハウス —— 白い紙にインクで引かれた盤面と、その周りの夜 */
+
+:root {
+  --night-0: #0d0c12;
+  --night-1: #16151d;
+  --night-2: #201e2a;
+  --edge: #322f40;
+  --text: #ece8f2;
+  --muted: #9a94ac;
+  --paper: #f2f0ea;
+  --ink: #14131a;
+  --blood: #e63946;
+  --cave: #2fd35a;
+  --shade: #35d0f5;
+  --hunter: #f7c221;
+  --sun: #ffb347;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 800px at 50% -10%, #241f33 0%, transparent 60%),
+    var(--night-0);
+  color: var(--text);
+  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+#app { min-height: 100%; }
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid var(--edge);
+  background: var(--night-2);
+  border-radius: 10px;
+  padding: 8px 14px;
+  transition: background 120ms, border-color 120ms, transform 80ms;
+}
+button:hover:not(:disabled) { background: #2c2939; border-color: #4c4761; }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { cursor: not-allowed; opacity: 0.42; }
+
+button.primary {
+  background: linear-gradient(180deg, #c92e3c, #9d1f2c);
+  border-color: #d94a56;
+  font-weight: 700;
+  width: 100%;
+  padding: 12px;
+}
+button.primary:hover { background: linear-gradient(180deg, #dc3b49, #ac2634); }
+button.ghost { background: transparent; }
+
+/* ------------------------------------------------------------ 開始画面 */
+
+.setup {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 32px 20px;
+}
+
+.setup-panel {
+  width: min(640px, 100%);
+  background: linear-gradient(180deg, var(--night-1), var(--night-0));
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+  padding: 32px;
+  box-shadow: 0 30px 80px rgb(0 0 0 / 0.5);
+}
+
+.setup-panel h1 {
+  margin: 0 0 6px;
+  font-size: 34px;
+  letter-spacing: 0.08em;
+}
+.tagline { margin: 0 0 26px; color: var(--muted); }
+
+.setup-field { margin-bottom: 18px; }
+.setup-label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border-radius: 999px; padding: 7px 16px; }
+.chip.is-on {
+  background: var(--player-color, #3d3752);
+  border-color: color-mix(in srgb, var(--player-color, #6a5f8f) 70%, white 30%);
+  font-weight: 700;
+}
+
+.start { margin-top: 10px; }
+
+.rules { margin-top: 24px; border-top: 1px solid var(--edge); padding-top: 16px; }
+.rules summary { cursor: pointer; color: var(--muted); }
+.rules ul { padding-left: 20px; margin: 12px 0; }
+.rules li { margin-bottom: 6px; }
+.rules h3 { margin: 18px 0 6px; font-size: 14px; letter-spacing: 0.1em; }
+.rules b { color: var(--text); }
+
+/* ------------------------------------------------------------ 対局画面 */
+
+.game {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 20px;
+  padding: 20px;
+  min-height: 100vh;
+  align-items: start;
+}
+
+.stage {
+  position: sticky;
+  top: 20px;
+  display: grid;
+  place-items: center;
+}
+
+.board {
+  width: 100%;
+  max-width: min(78vh, 100%);
+  height: auto;
+  background: var(--paper);
+  border-radius: 20px;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.55);
+  user-select: none;
+}
+
+/* --- マス --- */
+
+.cell { fill: transparent; stroke: none; cursor: default; }
+.cell-cave { fill: var(--cave); fill-opacity: 0.82; }
+.cell-shade { fill: var(--shade); fill-opacity: 0.82; }
+.cell-village { fill: var(--blood); }
+.cell-castle { fill: #dedbd2; }
+
+.cell.is-blocked { fill: #cfcbc0; }
+
+/* ハンターの現在地と次の一歩は、マスの色を潰さずに縁取りで示す */
+.cell.is-danger {
+  stroke: #c98f00;
+  stroke-width: 7;
+  stroke-dasharray: 12 9;
+  stroke-opacity: 0.9;
+}
+.cell.is-hunter { stroke: #a86b00; stroke-width: 8; stroke-opacity: 0.95; }
+
+.cell.is-doomed:not(.cell-shade):not(.cell-castle) {
+  fill: var(--sun);
+  fill-opacity: 0.16;
+}
+
+.cell.is-shroud {
+  fill: #6b4fd8;
+  fill-opacity: 0.42;
+}
+
+/* 進める先。ハンターの縁取りより優先して見せる */
+.cell.is-legal {
+  cursor: pointer;
+  stroke: #1c1a24;
+  stroke-width: 6;
+  stroke-dasharray: none;
+  stroke-opacity: 1;
+  animation: pulse 1.7s ease-in-out infinite;
+}
+.cell.is-legal:hover { fill: #ffffff; fill-opacity: 0.92; }
+.cell.is-legal.cell-plain { fill: #ffe9a8; }
+
+.cell.is-target {
+  cursor: pointer;
+  stroke: #6b4fd8;
+  stroke-width: 6;
+  fill: #b39dff;
+  fill-opacity: 0.55;
+}
+
+@keyframes pulse {
+  0%, 100% { stroke-opacity: 0.45; }
+  50% { stroke-opacity: 1; }
+}
+
+/* --- インクの線 --- */
+
+.ink-ring, .ink-spoke, .ink-bridge, .ink-castle {
+  fill: none;
+  stroke: var(--ink);
+  stroke-linecap: round;
+}
+.ink-ring { stroke-width: 2.4; }
+.ink-spoke { stroke-width: 1.8; }
+.ink-bridge { stroke-width: 5; }
+.ink-castle { stroke-width: 6; }
+
+.glyph {
+  font-size: 22px;
+  font-weight: 700;
+  fill: var(--ink);
+  fill-opacity: 0.5;
+  pointer-events: none;
+}
+.glyph-village { font-size: 30px; fill: var(--paper); fill-opacity: 0.95; }
+.glyph-castle { font-size: 26px; fill-opacity: 0.6; }
+
+/* --- ハンター --- */
+
+.hunter-body { fill: var(--hunter); stroke: var(--ink); stroke-width: 5; stroke-linejoin: round; }
+.hunter-eye { fill: var(--shade); }
+.hunter-ghost {
+  fill: var(--hunter);
+  fill-opacity: 0.3;
+  stroke: #a86b00;
+  stroke-opacity: 0.55;
+  stroke-width: 3;
+  stroke-dasharray: 7 6;
+  stroke-linejoin: round;
+}
+
+/* --- コマ --- */
+
+.piece-shadow { fill: rgb(0 0 0 / 0.28); }
+.piece-body { stroke: var(--ink); stroke-width: 4; }
+.piece-label { font-size: 19px; font-weight: 800; fill: #fff; pointer-events: none; }
+.piece-label.is-small { font-size: 15px; }
+.piece.is-current .piece-body { stroke: #fff; stroke-width: 6; }
+.piece-blood circle { fill: #8c0f1c; stroke: var(--paper); stroke-width: 3; }
+.piece-blood-count { font-size: 13px; font-weight: 800; fill: #fff; }
+
+.dawn-flash {
+  fill: var(--sun);
+  animation: dawn 1.2s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes dawn {
+  0% { opacity: 0; }
+  25% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+
+/* ------------------------------------------------------------ サイドパネル */
+
+.side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.side h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.status, .players, .hand-block, .controls, .log-block {
+  background: var(--night-1);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.status.is-urgent { border-color: var(--sun); box-shadow: 0 0 0 1px rgb(255 179 71 / 0.25); }
+.status.is-over { border-color: #6a5f8f; }
+.status-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.pill {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--night-2);
+  border: 1px solid var(--edge);
+}
+.pill-blood { color: #ff9aa4; }
+
+.dawn { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dawn-label { color: var(--sun); font-size: 13px; }
+.dawn-pips { display: inline-flex; gap: 4px; }
+.dawn-pips i {
+  width: 20px; height: 6px; border-radius: 3px; display: block;
+  background: var(--edge);
+}
+.dawn-pips i.on { background: var(--sun); }
+
+.finale {
+  margin-top: 10px; font-size: 13px; color: #ffd9a0;
+  border-top: 1px dashed var(--edge); padding-top: 8px;
+}
+.warning { margin-top: 8px; font-size: 13px; color: var(--sun); }
+
+/* --- プレイヤー --- */
+
+.players { display: flex; flex-direction: column; gap: 8px; }
+.player {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--night-2);
+}
+.player.is-current {
+  border-color: var(--player-color);
+  box-shadow: inset 3px 0 0 var(--player-color);
+}
+.player-head { display: flex; align-items: center; gap: 8px; }
+.dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--player-color); flex: none;
+  border: 1px solid rgb(255 255 255 / 0.35);
+}
+.player-name { font-weight: 700; }
+.player-tag {
+  font-size: 10px; letter-spacing: 0.1em; color: var(--muted);
+  border: 1px solid var(--edge); border-radius: 4px; padding: 0 5px;
+}
+.player-score { margin-left: auto; font-size: 19px; font-weight: 800; }
+.player-score small { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 2px; }
+.player-stats {
+  display: flex; gap: 10px; font-size: 12px; color: var(--muted); margin-top: 2px;
+}
+.player-stats .safe { color: var(--shade); }
+.player-stats .exposed { color: var(--sun); }
+
+/* --- 手札 --- */
+
+.hand { display: flex; flex-direction: column; gap: 6px; }
+.hint { color: var(--muted); font-size: 11px; letter-spacing: 0; }
+.empty { margin: 0; color: var(--muted); font-size: 13px; }
+
+.bat {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  grid-template-rows: auto auto;
+  gap: 0 10px;
+  text-align: left;
+  padding: 8px 10px;
+}
+.bat-icon {
+  grid-row: 1 / 3;
+  align-self: center;
+  font-size: 20px;
+  color: #b39dff;
+  text-align: center;
+}
+.bat-name { font-weight: 700; }
+.bat-text, .bat-error { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+.bat-error { color: var(--sun); }
+.bat.is-selected { border-color: #6b4fd8; background: #2b2440; }
+
+/* --- 操作 --- */
+
+.turn-info { margin: 0 0 10px; font-size: 13px; }
+.turn-info.subtle { color: var(--muted); }
+.waiting { margin: 0; color: var(--muted); font-size: 13px; }
+
+.targeting-title { margin: 0 0 10px; font-weight: 700; font-size: 13px; }
+.targeting-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.targeting-options button { text-align: left; display: flex; align-items: center; gap: 8px; }
+.targeting-options small { color: var(--muted); margin-left: auto; }
+.targeting-options small.kill { color: var(--blood); }
+
+.gameover h2 { margin: 0 0 4px; font-size: 18px; color: var(--text); letter-spacing: 0.04em; }
+.winner { margin: 0 0 12px; font-size: 20px; font-weight: 800; color: var(--sun); }
+.ranking { margin: 0 0 14px; padding-left: 20px; font-size: 13px; }
+.ranking li { margin-bottom: 4px; }
+.ranking .dot { display: inline-block; margin-right: 6px; vertical-align: -1px; }
+
+/* --- ログ --- */
+
+.log-block { flex: 1; min-height: 0; }
+.log {
+  margin: 0; padding: 0; list-style: none;
+  max-height: 260px; overflow-y: auto;
+  font-size: 12.5px;
+}
+.log li { padding: 3px 0; border-bottom: 1px solid rgb(255 255 255 / 0.05); }
+.log-when { color: var(--muted); font-size: 11px; margin-right: 6px; }
+.log-good { color: #b6f0c2; }
+.log-bad { color: #ffb0b8; }
+.log-warn { color: #ffd9a0; }
+
+/* ------------------------------------------------------------ 狭い画面 */
+
+@media (max-width: 1000px) {
+  .game { grid-template-columns: 1fr; }
+  .stage { position: static; }
+  .board { max-width: min(92vw, 620px); }
+  .log { max-height: 180px; }
+}
