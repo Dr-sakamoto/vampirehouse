@@ -1,45 +1,47 @@
-import { CASTLE_RING, CASTLE_SECTORS } from '../game/board';
+import { CASTLE_RING } from '../game/board';
 import type { Cell } from '../game/types';
-import { getCalibration } from './calibration';
-import type { Point } from './calibration';
 
-export type { Point };
+export interface Point {
+  x: number;
+  y: number;
+}
 
 /**
- * 盤面写真そのものの画素サイズ。写真を差し替える場合はここも合わせる。
- * それ以外の座標（中心・リング半径・回転・四隅）はすべて calibration.ts の
- * 実行時データから取る ―― 盤面調整モードでドラッグした値が、次の描画から
- * そのまま使われる。
+ * 盤面はルール（`docs/design.md` §1）そのものを描いた図形。
+ * 同心円4リング＋放射線8本、というルールの構造を、そのまま等間隔の
+ * 幾何学図形として描く。写真に合わせて座標をドラッグで調整するような
+ * 手順は要らない ―― ルールが決まれば座標も決まる。
  */
-export const IMAGE_WIDTH = 896;
-export const IMAGE_HEIGHT = 1195;
+export const VIEW_SIZE = 900;
+export const CENTER: Point = { x: VIEW_SIZE / 2, y: VIEW_SIZE / 2 };
+
+/** リング境界の半径。[村の外周, リング1外周, リング2外周, リング3外周, リング4外周] */
+export const RING_RADII: [number, number, number, number, number] = [58, 148, 238, 328, 418];
+/** 城は最外リングのさらに外側、等間隔に離してぶら下げる */
+export const CASTLE_DISTANCE = RING_RADII[4] + 74;
 
 export const SECTOR_ANGLE = (Math.PI * 2) / 8;
 
-/** セクター中心の角度。sector 0 が盤面調整モードの回転値ぶん真上から回った位置 */
+/** セクター中心の角度。sector 0 を真上に固定する */
 export function sectorAngle(sector: number): number {
-  const { rotationDeg } = getCalibration();
-  return sector * SECTOR_ANGLE - Math.PI / 2 + (rotationDeg * Math.PI) / 180;
+  return sector * SECTOR_ANGLE - Math.PI / 2;
 }
 
 export function polar(radius: number, angle: number): Point {
-  const { center } = getCalibration();
-  return { x: center.x + radius * Math.cos(angle), y: center.y + radius * Math.sin(angle) };
+  return { x: CENTER.x + radius * Math.cos(angle), y: CENTER.y + radius * Math.sin(angle) };
 }
 
 function ringBounds(ring: number): { inner: number; outer: number } {
-  const { ringRadii } = getCalibration();
-  return { inner: ringRadii[ring - 1], outer: ringRadii[ring] };
+  return { inner: RING_RADII[ring - 1], outer: RING_RADII[ring] };
 }
 
 function castlePoint(sector: number): Point {
-  const { castles } = getCalibration();
-  return castles[CASTLE_SECTORS.indexOf(sector)];
+  return polar(CASTLE_DISTANCE, sectorAngle(sector));
 }
 
 /** マスの中心座標（当たり判定・コマ配置に使う） */
 export function cellCenter(cell: Cell): Point {
-  if (cell.ring === 0) return { ...getCalibration().center };
+  if (cell.ring === 0) return { ...CENTER };
   if (cell.ring === CASTLE_RING) return castlePoint(cell.sector);
   const { inner, outer } = ringBounds(cell.ring);
   return polar((inner + outer) / 2, sectorAngle(cell.sector));
@@ -47,13 +49,11 @@ export function cellCenter(cell: Cell): Point {
 
 /**
  * 当たり判定の半径。マスの中心に置いた「点」を、押せる大きさに太らせる。
- * リング幅と弧の長さの狭い方から自動で決めるので、盤面調整でリングの
- * 間隔を詰めても隣のマスと重なりにくい。
+ * リング幅と弧の長さの狭い方から自動で決める。
  */
 export function cellHitRadius(cell: Cell): number {
-  const { ringRadii } = getCalibration();
-  if (cell.ring === 0) return ringRadii[0] * 0.9;
-  if (cell.ring === CASTLE_RING) return 92;
+  if (cell.ring === 0) return RING_RADII[0] * 0.9;
+  if (cell.ring === CASTLE_RING) return 46;
   const { inner, outer } = ringBounds(cell.ring);
   const mid = (inner + outer) / 2;
   const radialGap = outer - inner;
@@ -68,6 +68,25 @@ export function trianglePath(center: Point, size: number, angle: number): string
     return `${(center.x + size * Math.cos(a)).toFixed(2)},${(center.y + size * Math.sin(a)).toFixed(2)}`;
   });
   return `M ${pts.join(' L ')} Z`;
+}
+
+/** ring/sector 1マスぶんの扇形（ドーナツ片）。盤面の下敷きを描くのに使う */
+export function ringSectorPath(ring: number, sector: number): string {
+  const { inner, outer } = ringBounds(ring);
+  const start = sectorAngle(sector) - SECTOR_ANGLE / 2;
+  const end = sectorAngle(sector) + SECTOR_ANGLE / 2;
+  const p1 = polar(inner, start);
+  const p2 = polar(outer, start);
+  const p3 = polar(outer, end);
+  const p4 = polar(inner, end);
+  return [
+    `M ${p1.x.toFixed(2)},${p1.y.toFixed(2)}`,
+    `L ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`,
+    `A ${outer.toFixed(2)},${outer.toFixed(2)} 0 0 1 ${p3.x.toFixed(2)},${p3.y.toFixed(2)}`,
+    `L ${p4.x.toFixed(2)},${p4.y.toFixed(2)}`,
+    `A ${inner.toFixed(2)},${inner.toFixed(2)} 0 0 0 ${p1.x.toFixed(2)},${p1.y.toFixed(2)}`,
+    'Z',
+  ].join(' ');
 }
 
 export { CASTLE_RING };
