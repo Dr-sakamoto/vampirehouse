@@ -63,25 +63,28 @@ button.ghost { background: transparent; }
 .setup {
   display: grid;
   place-items: center;
-  min-height: 100vh;
-  padding: 32px 20px;
+  min-height: 100dvh;
+  padding: 20px 16px;
 }
 
+/* 開始画面もページはスクロールさせない。溢れるのはパネルの中だけ */
 .setup-panel {
-  width: min(640px, 100%);
+  width: min(680px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   background: linear-gradient(180deg, var(--night-1), var(--night-0));
   border: 1px solid var(--edge);
   border-radius: 18px;
-  padding: 32px;
+  padding: 28px;
   box-shadow: 0 30px 80px rgb(0 0 0 / 0.5);
 }
 
 .setup-panel h1 {
   margin: 0 0 6px;
-  font-size: 34px;
+  font-size: clamp(26px, 4vw, 34px);
   letter-spacing: 0.08em;
 }
-.tagline { margin: 0 0 26px; color: var(--muted); }
+.tagline { margin: 0 0 20px; color: var(--muted); }
 
 .setup-field { margin-bottom: 18px; }
 .setup-label {
@@ -101,7 +104,12 @@ button.ghost { background: transparent; }
 
 .params { margin: 18px 0 0; border-top: 1px solid var(--edge); padding-top: 14px; }
 .params summary { cursor: pointer; color: var(--muted); font-size: 12px; letter-spacing: 0.14em; }
-.params-grid { display: grid; gap: 16px; margin: 16px 0 4px; }
+.params-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px 20px;
+  margin: 16px 0 4px;
+}
 .param-field { display: grid; gap: 6px; }
 .param-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .param-label { font-size: 13px; color: var(--text); }
@@ -123,28 +131,44 @@ button.ghost { background: transparent; }
 
 /* ------------------------------------------------------------ 対局画面 */
 
+/*
+ * 1画面完結。盤面を中央で最大まで広げ、その余白 ―― 横長画面なら左右、
+ * 縦長画面なら上下 ―― にHUDを敷く。ページ自体は決してスクロールしない。
+ * 溢れてよいのは記録や手札といった各パネルの内側だけ。
+ */
+
 .game {
+  --rail-left: clamp(184px, 18vw, 250px);
+  --rail-right: clamp(198px, 20vw, 290px);
+  --pad: 12px;
+  position: fixed;
+  inset: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 20px;
-  padding: 20px;
-  min-height: 100vh;
-  align-items: start;
+  grid-template-columns: var(--rail-left) minmax(0, 1fr) var(--rail-right);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
+  padding: var(--pad);
+  padding-top: max(var(--pad), env(safe-area-inset-top));
+  padding-bottom: max(var(--pad), env(safe-area-inset-bottom));
+  padding-left: max(var(--pad), env(safe-area-inset-left));
+  padding-right: max(var(--pad), env(safe-area-inset-right));
+  overflow: hidden;
 }
 
 .stage {
-  position: sticky;
-  top: 20px;
+  grid-column: 2;
+  grid-row: 1;
+  position: relative;
   display: grid;
   place-items: center;
+  min-width: 0;
+  min-height: 0;
 }
 
+/* viewBox が正方形なので、箱を埋めるだけで縦横どちらにも自動で収まる */
 .board {
   width: 100%;
-  max-width: min(78vh, 100%);
-  height: auto;
-  border-radius: 14px;
-  box-shadow: 0 24px 70px rgb(0 0 0 / 0.55);
+  height: 100%;
   user-select: none;
 }
 
@@ -223,6 +247,12 @@ button.ghost { background: transparent; }
 /* --- ハンター。写真の金の三角と同じ色調の、動く駒 --- */
 
 .hunter-body { fill: var(--hunter); stroke: #4a3a10; stroke-width: 4; stroke-linejoin: round; }
+.hunter-label {
+  font-size: 15px;
+  font-weight: 800;
+  fill: #4a3a10;
+  pointer-events: none;
+}
 .hunter-ghost {
   fill: var(--hunter);
   fill-opacity: 0.28;
@@ -254,133 +284,265 @@ button.ghost { background: transparent; }
   100% { opacity: 0; }
 }
 
-/* ------------------------------------------------------------ サイドパネル */
+/* ------------------------------------------------------------ HUD */
 
-.side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.side h2 {
+/*
+ * 言葉ではなく記号で伝えるHUD。盤面に描いてある記号（🦇=洞窟 / ⛺=日陰 /
+ * ▲=ハンター）をそのまま脇でも使い、数量は「点いた粒」か太い数字で見せる。
+ * 説明の文章は title 属性に畳んである ―― 読みたい時だけ出てくる。
+ */
+
+.hud {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  grid-row: 1;
+}
+.hud-left { grid-column: 1; }
+.hud-right { grid-column: 3; justify-content: flex-end; }
+
+.hud h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 8px;
   font-size: 12px;
-  letter-spacing: 0.16em;
-  color: var(--muted);
   font-weight: 600;
+  color: var(--muted);
 }
+.head-icon { font-size: 15px; line-height: 1; }
 
 .status, .players, .hand-block, .controls, .log-block {
-  background: var(--night-1);
+  background: color-mix(in srgb, var(--night-1) 90%, transparent);
   border: 1px solid var(--edge);
-  border-radius: 14px;
-  padding: 14px;
+  border-radius: 12px;
+  padding: 10px 12px;
+  backdrop-filter: blur(8px);
 }
 
-.status.is-urgent { border-color: var(--sun); box-shadow: 0 0 0 1px rgb(255 179 71 / 0.25); }
-.status.is-over { border-color: #6a5f8f; }
-.status-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-.pill {
+/* --- 共通部品：色つき番号・記号＋数・粒ゲージ --- */
+
+/* 盤面のコマと同じ「色つきの番号」。名前を書かなくても誰だか分かる */
+.disc {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--player-color, var(--edge));
+  border: 1px solid rgb(255 255 255 / 0.35);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
   font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--night-2);
-  border: 1px solid var(--edge);
+  color: var(--muted);
 }
-.pill-blood { color: #ff9aa4; }
+.stat b {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.stat .to { color: var(--muted); }
+.stat.safe { color: var(--shade); }
+.stat.exposed { color: var(--sun); }
+.stat-icon { font-size: 14px; }
 
-.dawn { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dawn-label { color: var(--sun); font-size: 13px; }
-.dawn-pips { display: inline-flex; gap: 4px; }
-.dawn-pips i {
-  width: 20px; height: 6px; border-radius: 3px; display: block;
+.pips { display: inline-flex; gap: 3px; }
+.pips i {
+  display: block;
+  width: 13px;
+  height: 5px;
+  border-radius: 3px;
   background: var(--edge);
 }
-.dawn-pips i.on { background: var(--sun); }
+.pips i.on { background: var(--pip, var(--text)); }
 
-.finale {
-  margin-top: 10px; font-size: 13px; color: #ffd9a0;
-  border-top: 1px dashed var(--edge); padding-top: 8px;
+/* --- 状況：夜・夜明け・村の血 --- */
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
 }
-.warning { margin-top: 8px; font-size: 13px; color: var(--sun); }
+.gauge { display: inline-flex; align-items: center; gap: 6px; }
+.gauge-icon { font-size: 15px; line-height: 1; }
+.gauge-night { --pip: #b9a7ff; }
+.gauge-dawn { --pip: var(--sun); }
+.status .stat-blood b { font-size: 15px; }
+.mult {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 800;
+  color: #ff9aa4;
+  border: 1px solid #7a2531;
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+/* 夜明けが次のラウンドに迫ったら、☀ゲージが脈打つ。文章では言わない */
+.status.is-urgent { border-color: var(--sun); box-shadow: 0 0 0 1px rgb(255 179 71 / 0.25); }
+.status.is-urgent .gauge-dawn { animation: sunrise 1.4s ease-in-out infinite; }
+.status.is-over { border-color: #6a5f8f; }
+@keyframes sunrise {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
 
 /* --- プレイヤー --- */
 
-.players { display: flex; flex-direction: column; gap: 8px; }
+.players { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .player {
   border: 1px solid var(--edge);
   border-radius: 10px;
-  padding: 8px 10px;
+  padding: 6px 8px;
   background: var(--night-2);
+  min-width: 0;
 }
 .player.is-current {
   border-color: var(--player-color);
   box-shadow: inset 3px 0 0 var(--player-color);
 }
-.player-head { display: flex; align-items: center; gap: 8px; }
-.dot {
-  width: 12px; height: 12px; border-radius: 50%;
-  background: var(--player-color); flex: none;
-  border: 1px solid rgb(255 255 255 / 0.35);
+.player-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.player-tag { font-size: 13px; opacity: 0.7; }
+.player-score {
+  margin-left: auto;
+  font-size: 18px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
-.player-name { font-weight: 700; }
-.player-tag {
-  font-size: 10px; letter-spacing: 0.1em; color: var(--muted);
-  border: 1px solid var(--edge); border-radius: 4px; padding: 0 5px;
-}
-.player-score { margin-left: auto; font-size: 19px; font-weight: 800; }
-.player-score small { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 2px; }
-.player-stats {
-  display: flex; gap: 10px; font-size: 12px; color: var(--muted); margin-top: 2px;
-}
-.player-stats .safe { color: var(--shade); }
-.player-stats .exposed { color: var(--sun); }
+.player-stats { display: flex; flex-wrap: wrap; gap: 2px 9px; margin-top: 3px; }
 
-/* --- 手札 --- */
+/* --- 手札。絵と短い名前だけのチップ --- */
 
-.hand { display: flex; flex-direction: column; gap: 6px; }
-.hint { color: var(--muted); font-size: 11px; letter-spacing: 0; }
-.empty { margin: 0; color: var(--muted); font-size: 13px; }
+.hand-block { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; }
+.hand-block[hidden] { display: none; }
+.pips-bat { --pip: #b39dff; }
+.hand {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.empty {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 15px;
+  color: var(--muted);
+  opacity: 0.5;
+}
 
 .bat {
   display: grid;
-  grid-template-columns: 30px 1fr;
-  grid-template-rows: auto auto;
-  gap: 0 10px;
-  text-align: left;
-  padding: 8px 10px;
-}
-.bat-icon {
-  grid-row: 1 / 3;
-  align-self: center;
-  font-size: 20px;
-  color: #b39dff;
+  justify-items: center;
+  gap: 2px;
+  padding: 7px 4px;
   text-align: center;
 }
-.bat-name { font-weight: 700; }
-.bat-text, .bat-error { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
-.bat-error { color: var(--sun); }
+.bat-icon { font-size: 19px; line-height: 1.15; color: #b39dff; }
+.bat-name { font-size: 11.5px; font-weight: 700; white-space: nowrap; }
 .bat.is-selected { border-color: #6b4fd8; background: #2b2440; }
 
 /* --- 操作 --- */
 
-.turn-info { margin: 0 0 10px; font-size: 13px; }
-.turn-info.subtle { color: var(--muted); }
-.waiting { margin: 0; color: var(--muted); font-size: 13px; }
+.controls { display: flex; flex-direction: column; gap: 8px; }
+.turn-info { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0; }
+.turn-info .stat b { font-size: 15px; }
 
-.targeting-title { margin: 0 0 10px; font-weight: 700; font-size: 13px; }
-.targeting-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-.targeting-options button { text-align: left; display: flex; align-items: center; gap: 8px; }
-.targeting-options small { color: var(--muted); margin-left: auto; }
-.targeting-options small.kill { color: var(--blood); }
+button.primary { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn-icon { font-size: 19px; line-height: 1; }
+.btn-gain { font-size: 14px; font-weight: 800; }
 
-.gameover h2 { margin: 0 0 4px; font-size: 18px; color: var(--text); letter-spacing: 0.04em; }
-.winner { margin: 0 0 12px; font-size: 20px; font-weight: 800; color: var(--sun); }
-.ranking { margin: 0 0 14px; padding-left: 20px; font-size: 13px; }
-.ranking li { margin-bottom: 4px; }
-.ranking .dot { display: inline-block; margin-right: 6px; vertical-align: -1px; }
+/* CPUの思考中は、その色の点が3つ脈打つだけ */
+.thinking { display: flex; align-items: center; gap: 8px; }
+.thinking .dots { display: inline-flex; gap: 4px; }
+.thinking .dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: think 1.1s ease-in-out infinite;
+}
+.thinking .dots i:nth-child(2) { animation-delay: 0.15s; }
+.thinking .dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes think {
+  0%, 100% { opacity: 0.25; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
 
-/* --- ログ --- */
+/* --- コウモリの対象選び --- */
 
-.log-block { flex: 1; min-height: 0; }
+.targeting { display: flex; flex-direction: column; gap: 8px; }
+.targeting-title { display: flex; align-items: center; gap: 6px; margin: 0; }
+.targeting-title .bat-icon { font-size: 17px; }
+.targeting-title .bat-name { font-size: 13px; }
+.targeting-title .aim { margin-left: auto; font-size: 13px; }
+.targeting-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.targeting-options button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+}
+.hunter-mark { display: inline-flex; align-items: center; gap: 2px; color: var(--hunter); font-weight: 800; }
+.hunter-mark b { font-size: 11px; }
+.dir { font-size: 15px; }
+.kill { display: inline-flex; align-items: center; gap: 2px; color: var(--blood); }
+button.cancel { align-self: flex-start; padding: 4px 12px; color: var(--muted); }
+
+/* --- 決着 --- */
+
+.gameover { display: flex; flex-direction: column; gap: 10px; }
+.winner { display: flex; align-items: center; gap: 6px; margin: 0; }
+.winner .crown { font-size: 22px; }
+.winner .disc { width: 26px; height: 26px; font-size: 13px; }
+.ranking {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ranking li { display: flex; align-items: center; gap: 8px; }
+.rank-score {
+  min-width: 22px;
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- ログ。畳んであるので、普段は見出しの記号ひとつぶんしか場所を取らない --- */
+
+.log-block { display: flex; flex-direction: column; min-height: 0; flex: 0 0 auto; }
+.log-block[open] { flex: 1 1 auto; }
+.log-block summary {
+  width: fit-content;
+  margin: 0;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--muted);
+}
+.log-block[open] summary { margin-bottom: 8px; }
 .log {
   margin: 0; padding: 0; list-style: none;
-  max-height: 260px; overflow-y: auto;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
   font-size: 12.5px;
 }
 .log li { padding: 3px 0; border-bottom: 1px solid rgb(255 255 255 / 0.05); }
@@ -388,12 +550,85 @@ button.ghost { background: transparent; }
 .log-good { color: #b6f0c2; }
 .log-bad { color: #ffb0b8; }
 .log-warn { color: #ffd9a0; }
-
 /* ------------------------------------------------------------ 狭い画面 */
 
-@media (max-width: 1000px) {
-  .game { grid-template-columns: 1fr; }
-  .stage { position: static; }
-  .board { max-width: min(92vw, 620px); }
-  .log { max-height: 180px; }
+/* 横長のまま幅が足りない端末（横持ちのスマホなど）は、両脇を細く締める */
+@media (orientation: landscape) and (max-width: 900px) {
+  .game {
+    --rail-left: 132px;
+    --rail-right: 150px;
+    --pad: 8px;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .status, .players, .hand-block, .controls, .log-block { padding: 7px 8px; }
+  .player-score { font-size: 16px; }
+  .hand { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); }
+}
+
+/*
+ * 縦長画面では左右に余白がない。HUDを上下へ回して、盤面は真ん中の
+ * 空きぶんいっぱいに広げる ―― 縦に積んで伸ばすことはしない。
+ */
+@media (orientation: portrait) {
+  .game {
+    --pad: 8px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .hud-left { grid-column: 1; grid-row: 1; max-height: 30dvh; overflow-y: auto; }
+  .stage { grid-column: 1; grid-row: 2; }
+  .hud-right { grid-column: 1; grid-row: 3; max-height: 44dvh; overflow-y: auto; }
+
+  .status, .players, .hand-block, .controls, .log-block { padding: 8px 10px; }
+
+  /* 状況は横いっぱい、記録は右端の小さなボタン、プレイヤーはその下 */
+  .hud-left {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "status log"
+      "players players";
+    gap: 8px;
+  }
+  .hud-left .status { grid-area: status; }
+  .hud-left .log-block { grid-area: log; }
+  .hud-left .players { grid-area: players; }
+
+  /* プレイヤーは折り返す格子。4人でも2列2段で全員見える */
+  .players {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(146px, 1fr));
+    gap: 6px;
+  }
+
+  .log-block[open] { flex: 0 0 auto; }
+  .log { max-height: 22dvh; }
+
+  /* 手札も横一列のチップに */
+  .hand-block { flex: 0 0 auto; }
+  .hand {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+  }
+  .bat { flex: 0 0 auto; min-width: 66px; }
+
+  /* 操作は「記号ひとつ＋ボタン」の一行に */
+  .controls { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .turn-info { flex: 1 1 auto; }
+  .thinking { flex: 1 1 auto; }
+  .controls > button.primary { width: auto; flex: 0 0 auto; padding: 11px 22px; }
+  .gameover, .targeting { flex: 1 1 100%; }
+}
+
+/* 縦の余白まで乏しい端末では、さらに削る */
+@media (orientation: portrait) and (max-height: 720px) {
+  .game { font-size: 13.5px; }
+  .player-score { font-size: 16px; }
+  .hud-left { max-height: 26dvh; }
 }

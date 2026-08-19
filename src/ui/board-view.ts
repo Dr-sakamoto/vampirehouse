@@ -34,7 +34,7 @@ export interface BoardViewOptions {
 
 /**
  * 盤面は写真ではなく、ルール（同心円4リング＋放射線8本）をそのまま描いた
- * 図形。マスの色分けも役割（村・洞窟・日陰・城・通常）に沿って塗る
+ * 図形。マスの色分けも役割（村・洞窟・テント・城・通常）に沿って塗る
  * ―― ルールに書かれていない飾りは足さない。
  * その上に、当たり判定と状態表示を兼ねる円を重ねる（`geometry.ts` が座標計算）。
  */
@@ -181,13 +181,22 @@ export class BoardView {
       );
     }
 
-    for (const hunter of state.hunters) {
+    // 三角に番号を振る。コウモリ《誘導》の選択肢と目で結びつけられるように
+    state.hunters.forEach((hunter, i) => {
       const cell = state.board.cells[`r${hunter.ring}s${hunter.sector}`];
       const p = cellCenter(cell);
       const group = el('g', { class: 'hunter' });
       group.append(el('path', { d: trianglePath(p, 27, sectorAngle(cell.sector)), class: 'hunter-body' }));
+      const label = el('text', {
+        x: p.x,
+        y: p.y + 5,
+        class: 'hunter-label',
+        'text-anchor': 'middle',
+      });
+      label.textContent = String(i + 1);
+      group.append(label);
       this.markerLayer.append(group);
-    }
+    });
   }
 
   private renderPieces(state: GameState): void {

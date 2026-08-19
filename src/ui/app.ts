@@ -19,7 +19,7 @@ import {
   swapTargets,
   winnerIndices,
 } from '../game/rules';
-import type { BatCard, GameConfig, GameState } from '../game/types';
+import type { BatCard, GameConfig, GameState, Player } from '../game/types';
 import { BoardView } from './board-view';
 
 type Targeting =
@@ -30,6 +30,47 @@ type Targeting =
   | { kind: 'lure'; card: BatCard };
 
 const BOT_STEP_MS = 420;
+
+/**
+ * HUDの語彙。文章の代わりにこの記号だけで状況を伝える。
+ * 盤面に描いてある記号（🦇=洞窟＝日陰兼用 / ⛺=テント）とわざと同じものを使い、
+ * 「盤の上で見た形」がそのまま脇のパネルの意味になるようにする。
+ * 言葉は消さずに title 属性へ落とす ―― 読みたい人だけが読めばいい。
+ */
+const ICON = {
+  night: '🌙',
+  dawn: '☀',
+  blood: '🩸',
+  bat: '🦇',
+  step: '👣',
+  shade: '⛺',
+  castle: '🏰',
+  hunter: '▲',
+  human: '👤',
+  bot: '🤖',
+  dead: '☠',
+  crown: '🏆',
+  end: '⏭',
+  again: '↻',
+  cancel: '✕',
+  cw: '↻',
+  ccw: '↺',
+  aim: '🎯',
+} as const;
+
+/** 数を「点いた粒」で見せる。読まずに残量が分かる */
+function pips(total: number, on: number): string {
+  return Array.from({ length: total }, (_, i) => `<i class="${i < on ? 'on' : ''}"></i>`).join('');
+}
+
+/** プレイヤーの識別子は盤面のコマと同じ「色つきの番号」 */
+function disc(player: Player): string {
+  return `<span class="disc" style="--player-color:${player.color}">${player.index + 1}</span>`;
+}
+
+function who(player: Player): string {
+  return player.isBot ? ICON.bot : ICON.human;
+}
 
 export class App {
   private state: GameState;
@@ -57,6 +98,11 @@ export class App {
 
   // -------------------------------------------------------------- 組み立て
 
+  /**
+   * 画面は1枚きり。盤面を中央に最大まで広げ、その余白（横長なら左右、
+   * 縦長なら上下）にHUDを敷く。ページはスクロールしない ―― 溢れるのは
+   * ログや手札といった各パネルの内側だけ。
+   */
   private mount(): void {
     this.root.replaceChildren();
     this.root.className = 'game';
@@ -65,23 +111,31 @@ export class App {
     stage.className = 'stage';
     stage.append(this.board.svg);
 
-    const side = document.createElement('aside');
-    side.className = 'side';
-    side.innerHTML = `
+    const left = document.createElement('aside');
+    left.className = 'hud hud-left';
+    left.innerHTML = `
       <div class="status" id="status"></div>
       <div class="players" id="players"></div>
-      <div class="hand-block">
-        <h2>手札のコウモリ <span class="hint" id="hand-hint"></span></h2>
+      <details class="log-block" id="log-block">
+        <summary title="記録">📜</summary>
+        <ol class="log" id="log"></ol>
+      </details>
+    `;
+
+    const right = document.createElement('aside');
+    right.className = 'hud hud-right';
+    right.innerHTML = `
+      <div class="hand-block" id="hand-block">
+        <h2 title="手札のコウモリ">
+          <span class="head-icon">${ICON.bat}</span>
+          <span class="pips pips-bat" id="hand-hint"></span>
+        </h2>
         <div class="hand" id="hand"></div>
       </div>
       <div class="controls" id="controls"></div>
-      <div class="log-block">
-        <h2>記録</h2>
-        <ol class="log" id="log"></ol>
-      </div>
     `;
 
-    this.root.append(stage, side);
+    this.root.append(left, stage, right);
   }
 
   private q<T extends HTMLElement>(id: string): T {
@@ -178,43 +232,37 @@ export class App {
     return [];
   }
 
+  /**
+   * 夜・夜明け・血の3つのゲージだけ。数えるのは粒であって文字ではない。
+   * 「あと1ラウンドで夜明け」は文章ではなく、☀ゲージの点滅で伝わる。
+   */
   private renderStatus(): void {
     const s = this.state;
     const node = this.q('status');
-
-    if (s.phase === 'gameover') {
-      node.className = 'status is-over';
-      node.innerHTML = `
-        <div class="status-row">
-          <span class="pill pill-night">全 ${s.config.totalNights} 夜 終了</span>
-          <span class="pill pill-blood">村に残った血 ${s.bloodPool}</span>
-        </div>
-        <div class="dawn"><span class="dawn-label">☀</span><strong>陽が昇りきった</strong></div>
-      `;
-      return;
-    }
-
-    const untilDawn = roundsUntilDawn(s);
+    const over = s.phase === 'gameover';
+    const untilDawn = over ? 0 : roundsUntilDawn(s);
     const finale = isFinalNight(s);
-    node.className = `status${untilDawn === 1 ? ' is-urgent' : ''}`;
+
+    node.className = `status${over ? ' is-over' : untilDawn === 1 ? ' is-urgent' : ''}`;
     node.innerHTML = `
-      <div class="status-row">
-        <span class="pill pill-night">第 ${s.night} 夜 / ${s.config.totalNights}</span>
-        <span class="pill pill-round">ラウンド ${((s.round - 1) % s.config.roundsPerNight) + 1} / ${s.config.roundsPerNight}</span>
-        <span class="pill pill-blood">村の血 ${s.bloodPool}</span>
-      </div>
-      <div class="dawn">
-        <span class="dawn-label">☀ 夜明けまで</span>
-        <span class="dawn-pips">${Array.from({ length: s.config.roundsPerNight }, (_, i) =>
-          `<i class="${i < untilDawn ? 'on' : 'off'}"></i>`).join('')}</span>
-        <strong>${untilDawn} ラウンド</strong>
-      </div>
-      ${finale ? '<div class="finale">最終夜 ―― 持ち帰った血は 3 倍</div>' : ''}
+      <span class="gauge gauge-night" title="${
+        over ? `全 ${s.config.totalNights} 夜が明けた` : `第 ${s.night} 夜 / 全 ${s.config.totalNights} 夜`
+      }">
+        <span class="gauge-icon">${ICON.night}</span>
+        <span class="pips">${pips(s.config.totalNights, over ? s.config.totalNights : s.night)}</span>
+      </span>
+      <span class="gauge gauge-dawn" title="${
+        over ? '陽が昇りきった' : `夜明けまで ${untilDawn} ラウンド`
+      }">
+        <span class="gauge-icon">${ICON.dawn}</span>
+        <span class="pips">${pips(s.config.roundsPerNight, untilDawn)}</span>
+      </span>
+      <span class="stat stat-blood" title="${over ? '村に残った血' : '村に残っている血'} ${s.bloodPool}">
+        <span class="stat-icon">${ICON.blood}</span><b>${s.bloodPool}</b>
+      </span>
       ${
-        untilDawn === 1
-          ? finale
-            ? '<div class="warning">最後の夜明け。城に戻れなかった血は、すべて無に帰す。</div>'
-            : '<div class="warning">このラウンドの終わりに陽が昇る。日陰か城にいない者は灰になる。</div>'
+        finale && !over
+          ? `<em class="mult" title="最終夜 ―― 持ち帰った血は 3 倍">${ICON.blood}×3</em>`
           : ''
       }
     `;
@@ -230,18 +278,24 @@ export class App {
       card.className = `player${isCurrent ? ' is-current' : ''}`;
       card.style.setProperty('--player-color', p.color);
       const safe = isSafeCell(s, p, p.at);
+      card.title = `${p.name}（${p.isBot ? 'CPU' : 'あなた'}） ${p.score}点`;
       card.innerHTML = `
         <div class="player-head">
-          <span class="dot"></span>
-          <span class="player-name">${p.name}</span>
-          <span class="player-tag">${p.isBot ? 'CPU' : 'あなた'}</span>
-          <span class="player-score">${p.score}<small>点</small></span>
+          ${disc(p)}
+          <span class="player-tag">${who(p)}</span>
+          <span class="player-score">${p.score}</span>
         </div>
         <div class="player-stats">
-          <span title="運搬中の血">血 ${p.carrying}</span>
-          <span title="手札のコウモリ">蝠 ${p.bats.length}</span>
-          <span title="このターンの残り移動力">歩 ${isCurrent ? p.movesLeft : '–'}</span>
-          <span class="${safe ? 'safe' : 'exposed'}">${safe ? '安全' : '陽の下'}</span>
+          <span class="stat" title="運搬中の血">${ICON.blood}<b>${p.carrying}</b></span>
+          <span class="stat" title="手札のコウモリ">${ICON.bat}<b>${p.bats.length}</b></span>
+          ${
+            isCurrent
+              ? `<span class="stat" title="このターンの残り移動力">${ICON.step}<b>${p.movesLeft}</b></span>`
+              : ''
+          }
+          <span class="stat ${safe ? 'safe' : 'exposed'}" title="${
+            safe ? '夜明けが来ても安全' : '陽の下 ―― 夜明けが来れば灰になる'
+          }">${safe ? ICON.shade : ICON.dawn}</span>
         </div>
       `;
       node.append(card);
@@ -255,21 +309,24 @@ export class App {
     const hint = this.q('hand-hint');
     hand.replaceChildren();
 
+    // 自分の番でなければ手札の枠ごと消す。空の箱を置いておく意味はない
+    this.q('hand-block').hidden = me.isBot || s.phase !== 'playing';
     if (me.isBot || s.phase !== 'playing') {
-      hint.textContent = '';
-      hand.innerHTML = `<p class="empty">${
-        s.phase === 'gameover' ? '' : `${me.name}（CPU）の手番`
-      }</p>`;
+      hint.innerHTML = '';
+      hand.innerHTML = '';
       return;
     }
 
-    hint.textContent = `このターンあと ${Math.max(0, s.config.batsPerTurn - me.batsPlayedThisTurn)} 枚`;
+    const playsLeft = Math.max(0, s.config.batsPerTurn - me.batsPlayedThisTurn);
+    hint.innerHTML = pips(s.config.batsPerTurn, playsLeft);
+    hint.title = `このターンあと ${playsLeft} 枚まで使える`;
 
     if (me.bats.length === 0) {
-      hand.innerHTML = '<p class="empty">まだ1枚も持っていない。洞窟へ寄り道すれば手に入る。</p>';
+      hand.innerHTML = `<p class="empty" title="洞窟（${ICON.bat}）を通れば1枚引ける">${ICON.bat}<b>0</b></p>`;
       return;
     }
 
+    // 説明文はチップから外し、title に預ける ―― 絵と名前だけが並ぶ
     for (const card of me.bats) {
       const spec = BAT_SPECS[card.kind];
       const error = batPlayError(s, card.kind);
@@ -277,12 +334,10 @@ export class App {
       const selected = this.targeting.kind !== 'none' && this.targeting.card.uid === card.uid;
       button.className = `bat${error ? ' is-disabled' : ''}${selected ? ' is-selected' : ''}`;
       button.disabled = error !== null;
-      button.title = error ?? spec.text;
+      button.title = `${spec.name} — ${spec.text}${error ? `\n（${error}）` : ''}`;
       button.innerHTML = `
         <span class="bat-icon">${spec.icon}</span>
         <span class="bat-name">${spec.name}</span>
-        <span class="bat-text">${spec.text}</span>
-        ${error ? `<span class="bat-error">${error}</span>` : ''}
       `;
       button.addEventListener('click', () => this.handleBatClick(card));
       hand.append(button);
@@ -299,21 +354,28 @@ export class App {
       const panel = document.createElement('div');
       panel.className = 'gameover';
       panel.innerHTML = `
-        <h2>夜が明けきった</h2>
-        <p class="winner">${winners.map((w) => w.name).join(' と ')} の勝利</p>
+        <p class="winner" title="${winners.map((w) => w.name).join(' と ')} の勝利">
+          <span class="crown">${ICON.crown}</span>${winners.map(disc).join('')}
+        </p>
         <ol class="ranking">
           ${[...s.players]
             .sort((a, b) => b.score - a.score || a.deaths - b.deaths)
             .map(
               (p) =>
-                `<li><span class="dot" style="--player-color:${p.color}"></span>${p.name} — <strong>${p.score}点</strong>（持ち帰り ${p.delivered} / 死亡 ${p.deaths}）</li>`,
+                `<li title="${p.name}（${p.isBot ? 'CPU' : 'あなた'}）">
+                  ${disc(p)}
+                  <b class="rank-score">${p.score}</b>
+                  <span class="stat" title="城へ持ち帰った血">${ICON.blood}<b>${p.delivered}</b></span>
+                  <span class="stat" title="灰になった回数">${ICON.dead}<b>${p.deaths}</b></span>
+                </li>`,
             )
             .join('')}
         </ol>
       `;
       const again = document.createElement('button');
       again.className = 'primary';
-      again.textContent = 'もう一晩';
+      again.title = 'もう一晩';
+      again.innerHTML = `<span class="btn-icon">${ICON.again}</span>`;
       again.addEventListener('click', () => this.onExit());
       panel.append(again);
       node.append(panel);
@@ -327,36 +389,44 @@ export class App {
 
     const me = currentPlayer(s);
     if (me.isBot) {
-      const waiting = document.createElement('p');
-      waiting.className = 'waiting';
-      waiting.textContent = `${me.name} が考えている…`;
+      const waiting = document.createElement('div');
+      waiting.className = 'thinking';
+      waiting.title = `${me.name}（CPU）が考えている`;
+      waiting.innerHTML = `${disc(me)}<span class="dots"><i></i><i></i><i></i></span>`;
       node.append(waiting);
       return;
     }
 
-    const info = document.createElement('p');
-    info.className = 'turn-info';
     const atVillage = s.board.cells[me.at].kind === 'village';
-    info.innerHTML = atVillage
-      ? `村にいる。<strong>ここでターンを終えれば血を1つ吸える</strong>（運搬中 ${me.carrying} → ${me.carrying + (s.bloodPool > 0 ? 1 : 0)}）。`
-      : `残り移動力 <strong>${me.movesLeft}</strong>。光った隣のマスをクリックして進む。` +
-        `${s.players.some((p) => p.index !== me.index && p.at !== me.at && p.carrying > 0) ? '血を積んだ相手のマスへ踏み込めば、1つ噛み取れる。' : ''}`;
-    node.append(info);
+    const gain = atVillage && s.bloodPool > 0;
 
-    if (me.carrying > 0) {
-      const carry = document.createElement('p');
-      carry.className = 'turn-info subtle';
-      const now = deliveryScore(s, me.carrying);
-      const more = deliveryScore(s, me.carrying + 1) - now;
-      carry.innerHTML =
-        `血を ${me.carrying} 抱えている（いま城まで運べば <strong>${now} 点</strong>）。` +
-        `重いぶん足は鈍いが、もう1つ増やせば次の1本は ${more} 点になる。`;
-      node.append(carry);
-    }
+    const info = document.createElement('div');
+    info.className = 'turn-info';
+    info.innerHTML = `
+      <span class="stat" title="残り移動力 ${me.movesLeft} ―― 光ったマスへ進める">${
+        ICON.step
+      }<b>${me.movesLeft}</b></span>
+      ${
+        me.carrying > 0
+          ? `<span class="stat" title="運搬中の血 ${me.carrying} ―― いま城まで運べば ${deliveryScore(
+              s,
+              me.carrying,
+            )} 点。もう1つ増やせば次の1本は ${
+              deliveryScore(s, me.carrying + 1) - deliveryScore(s, me.carrying)
+            } 点になる">${ICON.blood}<b>${me.carrying}</b><span class="to">→</span>${
+              ICON.castle
+            }<b>${deliveryScore(s, me.carrying)}</b></span>`
+          : ''
+      }
+    `;
+    node.append(info);
 
     const end = document.createElement('button');
     end.className = 'primary';
-    end.textContent = atVillage ? '血を吸ってターン終了' : 'ターン終了';
+    end.title = gain ? '血を1つ吸ってターン終了' : 'ターン終了';
+    end.innerHTML = `${
+      gain ? `<span class="btn-gain">${ICON.blood}+1</span>` : ''
+    }<span class="btn-icon">${ICON.end}</span>`;
     end.addEventListener('click', () => this.handleEndTurn());
     node.append(end);
   }
@@ -370,19 +440,25 @@ export class App {
 
     const title = document.createElement('p');
     title.className = 'targeting-title';
+    title.innerHTML = `<span class="bat-icon">${spec!.icon}</span><span class="bat-name">${spec!.name}</span>`;
     panel.append(title);
 
     if (this.targeting.kind === 'flight') {
-      title.textContent = `《${spec!.name}》 降り立つ日陰を盤面から選ぶ`;
+      // 行き先は盤面が光って示す。ここでは「盤を狙え」とだけ見せる
+      title.title = `${spec!.name} — 降り立つ避難所（洞窟・テント）を盤面から選ぶ`;
+      title.insertAdjacentHTML(
+        'beforeend',
+        `<span class="aim" title="盤面の光った避難所を選ぶ">${ICON.aim}${ICON.bat}${ICON.shade}</span>`,
+      );
     } else if (this.targeting.kind === 'steal') {
-      title.textContent = `《${spec!.name}》 血を奪う相手を選ぶ`;
+      title.title = `${spec!.name} — 血を奪う相手を選ぶ`;
       const row = document.createElement('div');
       row.className = 'targeting-options';
       for (const index of stealTargets(s)) {
         const victim = s.players[index];
         const button = document.createElement('button');
-        button.style.setProperty('--player-color', victim.color);
-        button.innerHTML = `<span class="dot"></span>${victim.name}<small>血 ${victim.carrying}</small>`;
+        button.title = `${victim.name} から血を1つ奪う（運搬中 ${victim.carrying}）`;
+        button.innerHTML = `${disc(victim)}<span class="stat">${ICON.blood}<b>${victim.carrying}</b></span>`;
         button.addEventListener('click', () => {
           playBat(s, card!.uid, { player: index });
           this.targeting = { kind: 'none' };
@@ -392,17 +468,20 @@ export class App {
       }
       panel.append(row);
     } else if (this.targeting.kind === 'swap') {
-      title.textContent = `《${spec!.name}》 位置を入れ替える相手を選ぶ`;
+      title.title = `${spec!.name} — 位置を入れ替える相手を選ぶ`;
       const row = document.createElement('div');
       row.className = 'targeting-options';
       for (const index of swapTargets(s)) {
         const other = s.players[index];
-        const theirCell = s.board.cells[other.at];
+        const kind = s.board.cells[other.at].kind;
+        // 相手がいま何の上に立っているか ―― 横取りする価値があるのはここ
+        const spot = kind === 'shade' ? ICON.shade : kind === 'cave' ? ICON.bat : ICON.dawn;
+        const where = kind === 'shade' ? 'テント' : kind === 'cave' ? '洞窟' : '陽の下';
         const button = document.createElement('button');
-        button.style.setProperty('--player-color', other.color);
-        button.innerHTML =
-          `<span class="dot"></span>${other.name}` +
-          `<small>${theirCell.kind === 'shade' ? 'テント' : theirCell.kind === 'cave' ? '洞窟' : '陽の下'}・血 ${other.carrying}</small>`;
+        button.title = `${other.name}（${where}・運搬中 ${other.carrying}）と位置を入れ替える`;
+        button.innerHTML = `${disc(other)}<span class="stat">${spot}</span><span class="stat">${
+          ICON.blood
+        }<b>${other.carrying}</b></span>`;
         button.addEventListener('click', () => {
           playBat(s, card!.uid, { player: index });
           this.targeting = { kind: 'none' };
@@ -412,17 +491,22 @@ export class App {
       }
       panel.append(row);
     } else if (this.targeting.kind === 'lure') {
-      title.textContent = `《${spec!.name}》 動かすハンターと向きを選ぶ`;
+      title.title = `${spec!.name} — 動かすハンターと向きを選ぶ`;
       const row = document.createElement('div');
-      row.className = 'targeting-options';
+      row.className = 'targeting-options targeting-lure';
       s.hunters.forEach((hunter, i) => {
         for (const dir of [1, -1] as const) {
           const dest = cellId(hunter.ring, ((hunter.sector + dir) % 8 + 8) % 8);
           const victim = s.players.find((p) => p.at === dest);
           const button = document.createElement('button');
-          button.innerHTML = `ハンター${i + 1} を ${dir === 1 ? '時計回り' : '反時計回り'}へ${
-            victim ? `<small class="kill">${victim.name} を討つ</small>` : ''
+          button.title = `ハンター${i + 1} を${dir === 1 ? '時計回り' : '反時計回り'}へ1歩${
+            victim ? ` ―― ${victim.name} を討つ` : ''
           }`;
+          button.innerHTML = `
+            <span class="hunter-mark">${ICON.hunter}<b>${i + 1}</b></span>
+            <span class="dir">${dir === 1 ? ICON.cw : ICON.ccw}</span>
+            ${victim ? `<span class="kill">${disc(victim)}${ICON.dead}</span>` : ''}
+          `;
           button.addEventListener('click', () => {
             playBat(s, card!.uid, { hunter: hunter.id, dir });
             this.targeting = { kind: 'none' };
@@ -435,8 +519,9 @@ export class App {
     }
 
     const cancel = document.createElement('button');
-    cancel.className = 'ghost';
-    cancel.textContent = 'やめる';
+    cancel.className = 'ghost cancel';
+    cancel.title = 'やめる';
+    cancel.textContent = ICON.cancel;
     cancel.addEventListener('click', () => {
       this.targeting = { kind: 'none' };
       this.render();
