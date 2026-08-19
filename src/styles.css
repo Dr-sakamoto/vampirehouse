@@ -181,6 +181,16 @@ button.ghost { background: transparent; }
 .cell-plain { fill: var(--paper); fill-opacity: 0.14; }
 .cell-cave { fill: var(--cave); fill-opacity: 0.4; }
 .cell-shade { fill: var(--shade); fill-opacity: 0.32; }
+
+/* 洞窟とテントは、色は違っても役割は同じ「陽を凌げる定員1のマス」 */
+.cell-refuge-edge {
+  fill: none;
+  stroke: var(--shade);
+  stroke-width: 4;
+  stroke-dasharray: 7 6;
+  stroke-opacity: 0.75;
+  pointer-events: none;
+}
 .cell-castle { fill: var(--night-2); stroke: var(--edge); stroke-width: 3; }
 
 .cell-icon {

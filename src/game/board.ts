@@ -21,19 +21,15 @@ const CAVE_POSITIONS: Array<[number, number]> = [
 ];
 
 /**
- * 日陰の候補。前半4つ＝外周リングの東西南北（帰り道の避難所）、
- * 後半4つ＝深部リングの東西南北（欲張った時の命綱）。
- * プレイヤー数に応じて前半のみ / 全部を使う。
+ * 日陰（テント）は深部リング2の対角2マスだけ。
+ * 外周リング4にあった4マスは撤去した ―― 城の目と鼻の先に避難所があると
+ * 「帰るか隠れるか」の判断が消え、ただの作業になるため。
+ * 残した2マスはハンターの巡回リング上にある ＝ 命綱と死の罠が同じマス。
+ * 洞窟（リング3）も日陰を兼ねるので、避難所は 2 + 4 の計6マス（すべて定員1）。
  */
 const SHADE_POSITIONS: Array<[number, number]> = [
-  [4, 0],
-  [4, 2],
-  [4, 4],
-  [4, 6],
   [2, 0],
-  [2, 2],
   [2, 4],
-  [2, 6],
 ];
 
 export function cellId(ring: number, sector: number): string {
@@ -46,8 +42,15 @@ export function wrapSector(sector: number): number {
   return ((sector % SECTORS) + SECTORS) % SECTORS;
 }
 
-/** 日陰マスの総数。定員1なので、実質的な数はハンターの位置で毎ラウンド変わる */
+/** 日陰（テント）の総数。定員1なので、実質的な数はハンターの位置で毎ラウンド変わる */
 export const SHADE_COUNT = SHADE_POSITIONS.length;
+/** 洞窟の総数。洞窟は日陰を兼ねる（岩陰が陽を遮る、という世界観のまま避難所になる） */
+export const CAVE_COUNT = CAVE_POSITIONS.length;
+
+/** 夜明けをやり過ごせるマスの種類。城は別枠（常に安全・所有者だけ入れる） */
+export function isRefugeKind(kind: CellKind): boolean {
+  return kind === 'shade' || kind === 'cave';
+}
 
 export function createBoard(): Board {
   const cells: Record<string, Cell> = {};
@@ -119,6 +122,7 @@ export function createBoard(): Board {
     castleCells: CASTLE_SECTORS.map((s) => cellId(CASTLE_RING, s)),
     shadeCells: order.filter((id) => cells[id].kind === 'shade'),
     caveCells: order.filter((id) => cells[id].kind === 'cave'),
+    refugeCells: order.filter((id) => isRefugeKind(cells[id].kind)),
   };
 }
 

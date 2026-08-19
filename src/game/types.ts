@@ -4,8 +4,8 @@
 export type CellKind =
   | 'village' // 村（中心・血の供給源）
   | 'castle' // 城（プレイヤーの拠点・血の換金所・常に安全）
-  | 'cave' // 洞窟（コウモリを獲得）
-  | 'shade' // 日陰（夜明けの避難所・定員1）
+  | 'cave' // 洞窟（コウモリを獲得。岩陰が陽を遮るので日陰も兼ねる・定員1）
+  | 'shade' // 日陰＝テント（夜明けの避難所・定員1）
   | 'plain'; // 何もないマス
 
 /** 盤面上の1マス */
@@ -32,10 +32,12 @@ export interface Board {
   castleCells: string[];
   shadeCells: string[];
   caveCells: string[];
+  /** 夜明けをやり過ごせるマス（日陰＋洞窟）。城は含まない */
+  refugeCells: string[];
 }
 
 /** コウモリ（発展カード）の種類 */
-export type BatKind = 'dash' | 'lure' | 'steal' | 'shroud' | 'flight';
+export type BatKind = 'dash' | 'lure' | 'steal' | 'shroud' | 'flight' | 'swap';
 
 export interface BatCard {
   uid: string;
@@ -71,10 +73,16 @@ export interface Player {
   shroudedCell: string | null;
   /** 今ターンに洞窟を訪れたか（1ターン1枚まで） */
   lootedCaveThisTurn: boolean;
+  /** 今ターンに噛みついたか（1ターン1回まで） */
+  bitThisTurn: boolean;
   /** 通算の死亡回数（同点時のタイブレーク・統計用） */
   deaths: number;
-  /** 通算で城に持ち帰った血の本数（得点とは別。最終夜ボーナスがあるため） */
+  /** 通算で城に持ち帰った血の本数（得点とは別。まとめ持ち帰りボーナスと最終夜ボーナスがあるため） */
   delivered: number;
+  /** 通算で他プレイヤーから奪った血の本数（噛みつき・強奪・仕留めの合計。統計用） */
+  stolen: number;
+  /** 通算で他プレイヤーを死なせた回数（統計用） */
+  kills: number;
 }
 
 export type Phase = 'playing' | 'dawn' | 'gameover';
@@ -98,6 +106,8 @@ export interface GameConfig {
   totalNights: number;
   /** 村の血の総量 */
   bloodPool: number;
+  /** 城に持ち帰った血1つぶんの基礎得点 */
+  bloodValue: number;
   /** 1ターンに使えるコウモリの最大枚数 */
   batsPerTurn: number;
   /** 乱数シード（デッキのシャッフル用。同じシード＝同じ配札） */
@@ -121,6 +131,8 @@ export interface GameState {
   night: number;
   /** 現在の手番プレイヤー */
   current: number;
+  /** 今夜の先手プレイヤー。夜ごとに1つずつ回る（席順の有利不利を均す） */
+  startPlayer: number;
   phase: Phase;
   log: LogEntry[];
   /** 直近の夜明けで焼かれたプレイヤーindex（演出用） */

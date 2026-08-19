@@ -6,7 +6,7 @@ import {
   createGame,
   currentPlayer,
   defaultConfig,
-  deliveryValue,
+  deliveryScore,
   endTurn,
   flightTargets,
   isFinalNight,
@@ -16,6 +16,7 @@ import {
   playBat,
   roundsUntilDawn,
   stealTargets,
+  swapTargets,
   winnerIndices,
 } from '../game/rules';
 import type { BatCard, GameConfig, GameState, Player } from '../game/types';
@@ -25,13 +26,14 @@ type Targeting =
   | { kind: 'none' }
   | { kind: 'flight'; card: BatCard }
   | { kind: 'steal'; card: BatCard }
+  | { kind: 'swap'; card: BatCard }
   | { kind: 'lure'; card: BatCard };
 
 const BOT_STEP_MS = 420;
 
 /**
  * HUDの語彙。文章の代わりにこの記号だけで状況を伝える。
- * 盤面に描いてある記号（🦇=洞窟 / ⛺=日陰）とわざと同じものを使い、
+ * 盤面に描いてある記号（🦇=洞窟＝日陰兼用 / ⛺=テント）とわざと同じものを使い、
  * 「盤の上で見た形」がそのまま脇のパネルの意味になるようにする。
  * 言葉は消さずに title 属性へ落とす ―― 読みたい人だけが読めばいい。
  */
@@ -176,7 +178,12 @@ export class App {
     if (!this.humanTurn) return;
     if (batPlayError(this.state, card.kind) !== null) return;
 
-    if (card.kind === 'flight' || card.kind === 'steal' || card.kind === 'lure') {
+    if (
+      card.kind === 'flight' ||
+      card.kind === 'steal' ||
+      card.kind === 'swap' ||
+      card.kind === 'lure'
+    ) {
       this.targeting =
         this.targeting.kind !== 'none' && this.targeting.card.uid === card.uid
           ? { kind: 'none' }
@@ -255,7 +262,7 @@ export class App {
       </span>
       ${
         finale && !over
-          ? `<em class="mult" title="最終夜 ―― 持ち帰った血は 2 点">${ICON.blood}×2</em>`
+          ? `<em class="mult" title="最終夜 ―― 持ち帰った血は 3 倍">${ICON.blood}×3</em>`
           : ''
       }
     `;
@@ -401,11 +408,14 @@ export class App {
       }<b>${me.movesLeft}</b></span>
       ${
         me.carrying > 0
-          ? `<span class="stat" title="運搬中の血 ${me.carrying} ―― 城まで運べば ${
-              me.carrying * deliveryValue(s)
-            } 点">${ICON.blood}<b>${me.carrying}</b><span class="to">→</span>${ICON.castle}<b>${
-              me.carrying * deliveryValue(s)
-            }</b></span>`
+          ? `<span class="stat" title="運搬中の血 ${me.carrying} ―― いま城まで運べば ${deliveryScore(
+              s,
+              me.carrying,
+            )} 点。もう1つ増やせば次の1本は ${
+              deliveryScore(s, me.carrying + 1) - deliveryScore(s, me.carrying)
+            } 点になる">${ICON.blood}<b>${me.carrying}</b><span class="to">→</span>${
+              ICON.castle
+            }<b>${deliveryScore(s, me.carrying)}</b></span>`
           : ''
       }
     `;
@@ -435,10 +445,10 @@ export class App {
 
     if (this.targeting.kind === 'flight') {
       // 行き先は盤面が光って示す。ここでは「盤を狙え」とだけ見せる
-      title.title = `${spec!.name} — 降り立つ日陰を盤面から選ぶ`;
+      title.title = `${spec!.name} — 降り立つ避難所（洞窟・テント）を盤面から選ぶ`;
       title.insertAdjacentHTML(
         'beforeend',
-        `<span class="aim" title="盤面の光った日陰を選ぶ">${ICON.aim}${ICON.shade}</span>`,
+        `<span class="aim" title="盤面の光った避難所を選ぶ">${ICON.aim}${ICON.bat}${ICON.shade}</span>`,
       );
     } else if (this.targeting.kind === 'steal') {
       title.title = `${spec!.name} — 血を奪う相手を選ぶ`;
@@ -449,6 +459,29 @@ export class App {
         const button = document.createElement('button');
         button.title = `${victim.name} から血を1つ奪う（運搬中 ${victim.carrying}）`;
         button.innerHTML = `${disc(victim)}<span class="stat">${ICON.blood}<b>${victim.carrying}</b></span>`;
+        button.addEventListener('click', () => {
+          playBat(s, card!.uid, { player: index });
+          this.targeting = { kind: 'none' };
+          this.render();
+        });
+        row.append(button);
+      }
+      panel.append(row);
+    } else if (this.targeting.kind === 'swap') {
+      title.title = `${spec!.name} — 位置を入れ替える相手を選ぶ`;
+      const row = document.createElement('div');
+      row.className = 'targeting-options';
+      for (const index of swapTargets(s)) {
+        const other = s.players[index];
+        const kind = s.board.cells[other.at].kind;
+        // 相手がいま何の上に立っているか ―― 横取りする価値があるのはここ
+        const spot = kind === 'shade' ? ICON.shade : kind === 'cave' ? ICON.bat : ICON.dawn;
+        const where = kind === 'shade' ? 'テント' : kind === 'cave' ? '洞窟' : '陽の下';
+        const button = document.createElement('button');
+        button.title = `${other.name}（${where}・運搬中 ${other.carrying}）と位置を入れ替える`;
+        button.innerHTML = `${disc(other)}<span class="stat">${spot}</span><span class="stat">${
+          ICON.blood
+        }<b>${other.carrying}</b></span>`;
         button.addEventListener('click', () => {
           playBat(s, card!.uid, { player: index });
           this.targeting = { kind: 'none' };

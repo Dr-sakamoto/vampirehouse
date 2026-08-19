@@ -5,6 +5,7 @@ import {
   castleOf,
   cellId,
   createBoard,
+  isRefugeKind,
   wrapSector,
 } from './board';
 import { BAT_SPECS, buildDeck } from './bats';
@@ -27,6 +28,12 @@ export const PLAYER_NAMES = ['紅の城', '蒼の城', '翠の城', '金の城']
  * UI 側は呼び出し後に再描画するだけでよい。
  */
 
+/**
+ * 血1つの基礎点。血の本数（＝盤面を流れるモノの量）はそのままに、
+ * 1本あたりの価値を10倍にした。4点で勝つゲームは、勝っても手応えが薄い。
+ */
+const DEFAULT_BLOOD_VALUE = 10;
+
 export function defaultConfig(playerCount = 2, bots?: boolean[]): GameConfig {
   return {
     playerCount,
@@ -35,6 +42,7 @@ export function defaultConfig(playerCount = 2, bots?: boolean[]): GameConfig {
     roundsPerNight: 4,
     totalNights: 4,
     bloodPool: 5 * playerCount,
+    bloodValue: DEFAULT_BLOOD_VALUE,
     batsPerTurn: 2,
     seed: 1,
   };
@@ -69,8 +77,11 @@ export function createGame(config: GameConfig): GameState {
     batsPlayedThisTurn: 0,
     shroudedCell: null,
     lootedCaveThisTurn: false,
+    bitThisTurn: false,
     deaths: 0,
     delivered: 0,
+    stolen: 0,
+    kills: 0,
   }));
 
   const state: GameState = {
@@ -85,6 +96,7 @@ export function createGame(config: GameConfig): GameState {
     round: 1,
     night: 1,
     current: 0,
+    startPlayer: 0,
     phase: 'playing',
     log: [],
     lastBurned: [],
@@ -127,18 +139,18 @@ export function hunterNextCell(hunter: Hunter): string {
   return cellId(hunter.ring, wrapSector(hunter.sector + hunter.dir));
 }
 
-/** 夜明けを生き延びられるマスか */
+/** 夜明けを生き延びられるマスか。洞窟は岩陰が陽を遮るので日陰を兼ねる */
 export function isSafeCell(state: GameState, player: Player, id: string): boolean {
   const cell = state.board.cells[id];
   if (!cell) return false;
   if (cell.kind === 'castle') return true;
-  if (cell.kind === 'shade') return true;
+  if (isRefugeKind(cell.kind)) return true;
   return player.shroudedCell === id;
 }
 
-/** 日陰は定員1。他プレイヤーが立っていれば入れない */
-function shadeBlocked(state: GameState, id: string, moverIndex: number): boolean {
-  if (state.board.cells[id].kind !== 'shade') return false;
+/** 避難所（テント・洞窟）は定員1。他プレイヤーが立っていれば入れない */
+function refugeBlocked(state: GameState, id: string, moverIndex: number): boolean {
+  if (!isRefugeKind(state.board.cells[id].kind)) return false;
   return state.players.some((p) => p.index !== moverIndex && p.at === id);
 }
 
@@ -150,7 +162,7 @@ export function legalMoves(state: GameState): string[] {
   return state.board.cells[player.at].neighbors.filter((id) => {
     const cell = state.board.cells[id];
     if (cell.kind === 'castle' && cell.castleOf !== player.index) return false;
-    if (shadeBlocked(state, id, player.index)) return false;
+    if (refugeBlocked(state, id, player.index)) return false;
     return true;
   });
 }
@@ -165,9 +177,22 @@ export function isFinalNight(state: GameState): boolean {
   return state.night >= state.config.totalNights;
 }
 
-/** 最終夜は持ち帰りが2点。逆転の余地を残すための倍率 */
+/** 最終夜は持ち帰りが3倍。差がついていても、最後の一往復で全部ひっくり返る */
 export function deliveryValue(state: GameState): number {
-  return isFinalNight(state) ? 2 : 1;
+  return isFinalNight(state) ? 3 : 1;
+}
+
+/**
+ * 血 count 本を「いま」城に収めたときの得点。
+ *
+ * 同時に運んでいる血は、1本目が10点・2本目が20点・3本目が30点 …… と積み上がる
+ * （基礎点 × 1+2+…+count）。「欲張るほど帰りが遠い」の裏返しで、
+ * 欲張ったまま帰り着いたときだけ、見返りが跳ね上がる。最終夜はさらに3倍。
+ */
+export function deliveryScore(state: GameState, count: number): number {
+  if (count <= 0) return 0;
+  const stacked = (count * (count + 1)) / 2;
+  return state.config.bloodValue * stacked * deliveryValue(state);
 }
 
 // ---------------------------------------------------------------- ターン進行
@@ -177,6 +202,7 @@ export function beginTurn(state: GameState): void {
   player.movesLeft = moveAllowance(state, player);
   player.batsPlayedThisTurn = 0;
   player.lootedCaveThisTurn = false;
+  player.bitThisTurn = false;
 }
 
 function drawBat(state: GameState, player: Player): boolean {
@@ -205,25 +231,75 @@ function bankBlood(state: GameState, player: Player): void {
   if (cell.kind !== 'castle' || cell.castleOf !== player.index) return;
 
   const carried = player.carrying;
-  const gained = carried * deliveryValue(state);
+  const gained = deliveryScore(state, carried);
   player.score += gained;
   player.delivered += carried;
   player.carrying = 0;
   pushLog(state, `${player.name} が血 ${carried} を持ち帰った（+${gained}点）。`, 'good');
 }
 
-/** ハンターに触れた／太陽に焼かれたときの共通処理。血は村へ還る */
-function killPlayer(state: GameState, player: Player, reason: string): void {
+/** 血を1本、被害者から加害者へ移す。総量は変わらない */
+function transferBlood(thief: Player, victim: Player, amount: number): void {
+  const taken = Math.min(amount, victim.carrying);
+  if (taken <= 0) return;
+  victim.carrying -= taken;
+  thief.carrying += taken;
+  thief.stolen += taken;
+}
+
+/**
+ * ハンターに触れた／太陽に焼かれたときの共通処理。血は村へ還る。
+ * ただし killer が指定されているとき（誘導・影渡りで仕留めたとき）は、
+ * 抱えていた血がそのまま仕留めた側の懐に入る ―― 盤上で一番大きな逆転手。
+ */
+function killPlayer(
+  state: GameState,
+  player: Player,
+  reason: string,
+  killer?: Player,
+): void {
   const lost = player.carrying;
-  state.bloodPool += lost;
-  player.carrying = 0;
+  if (killer && killer.index !== player.index && lost > 0) {
+    transferBlood(killer, player, lost);
+  } else {
+    state.bloodPool += lost;
+    player.carrying = 0;
+  }
   player.deaths += 1;
   player.shroudedCell = null;
   player.at = castleOf(state.board, player.index);
   player.movesLeft = 0;
+  if (killer && killer.index !== player.index) killer.kills += 1;
+  const spoils =
+    lost > 0
+      ? killer && killer.index !== player.index
+        ? `血 ${lost} は ${killer.name} が啜り、`
+        : `血 ${lost} を落とし、`
+      : '';
+  pushLog(state, `${player.name} は${reason}。${spoils}城へ引き戻された。`, 'bad');
+}
+
+/**
+ * 他プレイヤーのいるマスへ踏み込んだときの噛みつき。血を1つ奪う。1ターンに1回まで。
+ * 「盤上で相手と同じマスに立つ」こと自体に意味を持たせる、常時使える干渉手段
+ * ―― 血を積んだ者を帰り道で待ち伏せる、という形の PVP。
+ *
+ * 城と村では起こらない。城は各プレイヤーの聖域であり、村は全員が必ず立ち寄る
+ * 収穫地点なので、ここを狩り場にすると先に着いた者がただ搾取されるだけになる。
+ */
+function bite(state: GameState, attacker: Player, cellIdAt: string): void {
+  if (attacker.bitThisTurn) return;
+  const kind = state.board.cells[cellIdAt].kind;
+  if (kind === 'castle' || kind === 'village') return;
+  const prey = state.players
+    .filter((p) => p.index !== attacker.index && p.at === cellIdAt && p.carrying > 0)
+    .sort((a, b) => b.carrying - a.carrying)[0];
+  if (!prey) return;
+  transferBlood(attacker, prey, 1);
+  attacker.bitThisTurn = true;
   pushLog(
     state,
-    `${player.name} は${reason}。${lost > 0 ? `血 ${lost} を落とし、` : ''}城へ引き戻された。`,
+    `${attacker.name} が ${prey.name} に噛みつき、血を1つ奪った（運搬中 ${attacker.carrying}）。`,
     'bad',
   );
 }
@@ -244,6 +320,9 @@ export function moveTo(state: GameState, target: string): boolean {
   }
 
   const cell = state.board.cells[target];
+
+  // 先客がいれば噛みつく（1ターン1回）
+  bite(state, player, target);
 
   // 自分の城に入ったら血が得点になる
   bankBlood(state, player);
@@ -282,9 +361,9 @@ export function endTurn(state: GameState): void {
   bankBlood(state, player);
   player.movesLeft = 0;
 
-  const isLastPlayer = state.current === state.players.length - 1;
-  if (!isLastPlayer) {
-    state.current += 1;
+  const next = (state.current + 1) % state.players.length;
+  if (next !== state.startPlayer) {
+    state.current = next;
     beginTurn(state);
     return;
   }
@@ -304,7 +383,7 @@ function endRound(state: GameState): void {
   if (checkBloodExhausted(state)) return;
 
   state.round += 1;
-  state.current = 0;
+  state.current = state.startPlayer;
   if (!dawnNow) {
     pushLog(state, `夜明けまであと ${roundsUntilDawn(state)} ラウンド。`, 'warn');
   }
@@ -346,9 +425,15 @@ function resolveDawn(state: GameState): void {
 
   state.night += 1;
   state.phase = 'playing';
+  // 先手は夜ごとに1つ回る。同じ席が毎晩「村に一番乗り」し続ける不公平を消す
+  state.startPlayer = (state.night - 1) % state.players.length;
   pushLog(
     state,
-    `第${state.night}夜が始まる。${isFinalNight(state) ? '最終夜 ―― 持ち帰る血は2点。' : `夜明けまで ${state.config.roundsPerNight} ラウンド。`}`,
+    `第${state.night}夜が始まる。先手は ${state.players[state.startPlayer].name}。${
+      isFinalNight(state)
+        ? '最終夜 ―― 持ち帰った血は3倍。'
+        : `夜明けまで ${state.config.roundsPerNight} ラウンド。`
+    }`,
     'info',
   );
 }
@@ -378,7 +463,7 @@ export function winnerIndices(state: GameState): number[] {
 // ---------------------------------------------------------------- コウモリ
 
 export interface BatTarget {
-  /** steal: 対象プレイヤーの index */
+  /** steal / swap: 対象プレイヤーの index */
   player?: number;
   /** lure: 動かすハンターの id */
   hunter?: string;
@@ -399,7 +484,10 @@ export function batPlayError(state: GameState, kind: BatKind): string | null {
     case 'steal':
       return stealTargets(state).length > 0 ? null : '奪える相手がいない';
     case 'flight':
-      return flightTargets(state).length > 0 ? null : '空いている日陰がない';
+      return flightTargets(state).length > 0 ? null : '空いている避難所がない';
+    case 'swap':
+      if (state.board.cells[player.at].kind === 'castle') return '城の中からは使えない';
+      return swapTargets(state).length > 0 ? null : '入れ替われる相手がいない';
     case 'shroud':
       return player.shroudedCell === player.at ? 'このマスは既に影の中' : null;
     default:
@@ -421,9 +509,18 @@ export function stealTargets(state: GameState): number[] {
 
 export function flightTargets(state: GameState): string[] {
   const me = currentPlayer(state);
-  return state.board.shadeCells.filter(
+  return state.board.refugeCells.filter(
     (id) => id !== me.at && !state.players.some((p) => p.index !== me.index && p.at === id),
   );
+}
+
+/** 影渡りの相手。城にいる者とは入れ替われない（城は各プレイヤーの聖域） */
+export function swapTargets(state: GameState): number[] {
+  const me = currentPlayer(state);
+  if (state.board.cells[me.at].kind === 'castle') return [];
+  return state.players
+    .filter((p) => p.index !== me.index && state.board.cells[p.at].kind !== 'castle')
+    .map((p) => p.index);
 }
 
 export function playBat(state: GameState, uid: string, target: BatTarget = {}): boolean {
@@ -449,7 +546,7 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
       const id = cellId(hunter.ring, hunter.sector);
       pushLog(state, `${player.name} が《${spec.name}》でハンターを動かした。`, 'info');
       for (const p of state.players) {
-        if (p.at === id) killPlayer(state, p, 'ハンターを差し向けられた');
+        if (p.at === id) killPlayer(state, p, 'ハンターを差し向けられた', player);
       }
       break;
     }
@@ -459,8 +556,7 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
         ? target.player
         : targets[0];
       const victim = state.players[victimIndex];
-      victim.carrying -= 1;
-      player.carrying += 1;
+      transferBlood(player, victim, 1);
       pushLog(state, `${player.name} が《${spec.name}》で ${victim.name} の血を1つ奪った。`, 'bad');
       break;
     }
@@ -474,9 +570,39 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
       const dest = target.cell && options.includes(target.cell) ? target.cell : options[0];
       player.at = dest;
       player.movesLeft = 0;
-      pushLog(state, `${player.name} が《${spec.name}》で日陰へ舞い降りた。`, 'info');
+      pushLog(state, `${player.name} が《${spec.name}》で避難所へ舞い降りた。`, 'info');
       if (hunterCells(state).includes(dest)) {
         killPlayer(state, player, 'ハンターの真上に降りてしまった');
+      }
+      break;
+    }
+    case 'swap': {
+      const targets = swapTargets(state);
+      const victimIndex =
+        target.player !== undefined && targets.includes(target.player)
+          ? target.player
+          : targets[0];
+      const victim = state.players[victimIndex];
+      const mine = player.at;
+      player.at = victim.at;
+      victim.at = mine;
+      player.movesLeft = 0;
+      // 影を渡った先が自分の影だったなら、その加護は置いてきたことになる
+      if (player.shroudedCell !== null && player.shroudedCell !== player.at) {
+        player.shroudedCell = null;
+      }
+      pushLog(
+        state,
+        `${player.name} が《${spec.name}》で ${victim.name} と位置を入れ替えた。`,
+        'bad',
+      );
+      const hunters = hunterCells(state);
+      // 相手をハンターの真上へ放り込んだなら、その血は放り込んだ側のもの
+      if (hunters.includes(victim.at)) {
+        killPlayer(state, victim, 'ハンターの前へ突き出された', player);
+      }
+      if (hunters.includes(player.at)) {
+        killPlayer(state, player, 'ハンターの懐へ飛び込んでしまった');
       }
       break;
     }

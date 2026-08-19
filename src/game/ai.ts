@@ -1,4 +1,4 @@
-import { VILLAGE, cellId, wrapSector } from './board';
+import { VILLAGE, cellId, isRefugeKind, wrapSector } from './board';
 import {
   batPlayError,
   currentPlayer,
@@ -13,6 +13,7 @@ import {
   playBat,
   roundsUntilDawn,
   stealTargets,
+  swapTargets,
   flightTargets,
   castleOf,
 } from './rules';
@@ -35,15 +36,20 @@ function dangerCells(state: GameState): Set<string> {
   return set;
 }
 
-/** 侵入できないマス（他人の城・埋まった日陰） */
-function blockedCells(state: GameState, me: Player): Set<string> {
+/** 他人の城。誰がどこに立っていようと、ここだけは永久に通れない */
+function foreignCastles(state: GameState, me: Player): Set<string> {
   const set = new Set<string>();
-  for (const id of state.board.order) {
-    const cell = state.board.cells[id];
-    if (cell.kind === 'castle' && cell.castleOf !== me.index) set.add(id);
+  for (const id of state.board.castleCells) {
+    if (state.board.cells[id].castleOf !== me.index) set.add(id);
   }
+  return set;
+}
+
+/** 侵入できないマス（他人の城・埋まった避難所） */
+function blockedCells(state: GameState, me: Player): Set<string> {
+  const set = foreignCastles(state, me);
   for (const p of state.players) {
-    if (p.index !== me.index && state.board.cells[p.at].kind === 'shade') set.add(p.at);
+    if (p.index !== me.index && isRefugeKind(state.board.cells[p.at].kind)) set.add(p.at);
   }
   return set;
 }
@@ -81,13 +87,18 @@ function safePath(
 }
 
 /** ハンターを避けた経路を優先し、無ければ現在位置のハンターだけ避ける */
-function routeTo(state: GameState, me: Player, target: string): string[] | null {
+function routeFrom(state: GameState, me: Player, from: string, target: string): string[] | null {
   const blocked = blockedCells(state, me);
   const cautious = new Set([...blocked, ...dangerCells(state)]);
-  const path = safePath(state, me.at, target, cautious);
+  const path = safePath(state, from, target, cautious);
   if (path) return path;
+  // どう通ってもハンターの進路をかすめるなら、せめて今いるマスだけは踏まない
   const minimal = new Set([...blocked, ...hunterCells(state)]);
-  return safePath(state, me.at, target, minimal);
+  return safePath(state, from, target, minimal);
+}
+
+function routeTo(state: GameState, me: Player, target: string): string[] | null {
+  return routeFrom(state, me, me.at, target);
 }
 
 function pathCost(path: string[] | null): number {
@@ -95,18 +106,24 @@ function pathCost(path: string[] | null): number {
 }
 
 /**
- * 血を抱えたまま朝を迎えられる、最も近いマス。
- * 深部リングの日陰はハンターの巡回路と重なっているので、
+ * 血を抱えたまま朝を迎えられる、最も近いマス。避難所は洞窟＋テントの6マスだけで、
+ * どれも定員1。深部のテントはハンターの巡回路と重なっているので、
  * 次のラウンドに踏まれるマスは避難先から除外する。
  */
 function nearestRefuge(
   state: GameState,
   me: Player,
   from: string = me.at,
+  /**
+   * 何ターンも先の避難を見積もるときは、今そこに誰が座っているかを無視する。
+   * 避難所は6マスしかないので、現在の埋まり具合をそのまま未来に投影すると
+   * 「どうせ逃げ込めない」と結論して村へ出発すらしなくなる。
+   */
+  ignoreOccupancy = false,
 ): { cell: string; cost: number } | null {
   const danger = dangerCells(state);
-  const blocked = blockedCells(state, me);
-  const candidates = [castleOf(state.board, me.index), ...state.board.shadeCells];
+  const blocked = ignoreOccupancy ? foreignCastles(state, me) : blockedCells(state, me);
+  const candidates = [castleOf(state.board, me.index), ...state.board.refugeCells];
   let best: { cell: string; cost: number } | null = null;
   for (const cell of candidates) {
     if (!isSafeCell(state, me, cell)) continue;
@@ -141,6 +158,43 @@ function cheapCaveDetour(state: GameState, me: Player, directCost: number): stri
     if (!best || extra < best.extra) best = { cell: cave, extra };
   }
   return best?.cell ?? null;
+}
+
+/**
+ * 血を抱えた相手のマスを通ってから目的地へ向かう経路。
+ * 通りすがりに1本奪えるなら、寄り道2歩ぶんまでは払う価値がある。
+ */
+function biteDetour(
+  state: GameState,
+  me: Player,
+  target: string | null,
+  mustArriveThisTurn: boolean,
+): string[] | null {
+  if (me.bitThisTurn || me.movesLeft <= 0) return null;
+  const danger = dangerCells(state);
+  const direct = target === null ? 0 : pathCost(routeTo(state, me, target));
+  let best: { path: string[]; extra: number } | null = null;
+
+  for (const prey of state.players) {
+    if (prey.index === me.index || prey.carrying <= 0) continue;
+    if (state.board.cells[prey.at].kind === 'castle') continue;
+    // 噛みに行って轢かれては元も子もない
+    if (danger.has(prey.at)) continue;
+    const toPrey = routeTo(state, me, prey.at);
+    if (!toPrey || pathCost(toPrey) > me.movesLeft) continue;
+
+    const rest =
+      target === null || target === prey.at
+        ? [prey.at]
+        : routeFrom(state, me, prey.at, target);
+    if (!rest) continue;
+    const total = pathCost(toPrey) + pathCost(rest);
+    if (mustArriveThisTurn && total > me.movesLeft) continue;
+    const extra = total - direct;
+    if (extra > 2) continue;
+    if (!best || extra < best.extra) best = { path: [...toPrey, ...rest.slice(1)], extra };
+  }
+  return best?.path ?? null;
 }
 
 /** 誘導カードで血を持った相手を仕留められるなら、その手を返す */
@@ -227,7 +281,12 @@ export function botTakeTurn(state: GameState): void {
       playBat(state, dashUid);
       path = routeTo(state, currentPlayer(state), target);
     }
+    const detour = biteDetour(state, currentPlayer(state), target, lastRoundOfNight);
+    if (detour) path = detour;
     if (path) walk(state, path);
+  } else {
+    const detour = biteDetour(state, me, null, lastRoundOfNight);
+    if (detour) walk(state, detour);
   }
   stepOffPatrolPath(state);
 
@@ -236,10 +295,25 @@ export function botTakeTurn(state: GameState): void {
     const now = currentPlayer(state);
     if (!isSafeCell(state, now, now.at)) {
       const flightUid = findBat(now, 'flight');
-      if (flightUid && batPlayError(state, 'flight') === null && flightTargets(state).length > 0) {
-        playBat(state, flightUid, { cell: flightTargets(state)[0] });
+      // 巡回路の上のテントへ降りては元も子もない。空いていて踏まれない避難所だけを選ぶ
+      const danger = dangerCells(state);
+      const perch = flightTargets(state).find((id) => !danger.has(id));
+      if (flightUid && perch && batPlayError(state, 'flight') === null) {
+        playBat(state, flightUid, { cell: perch });
       }
     }
+    // 逃げ場が残っていないなら、避難所に座っている相手と入れ替わって朝を押しつける
+    const swapper = currentPlayer(state);
+    const swapUid = findBat(swapper, 'swap');
+    if (!isSafeCell(state, swapper, swapper.at) && swapUid && batPlayError(state, 'swap') === null) {
+      const hunters = new Set(hunterCells(state));
+      const victim = swapTargets(state).find(
+        (i) =>
+          isSafeCell(state, swapper, state.players[i].at) && !hunters.has(state.players[i].at),
+      );
+      if (victim !== undefined) playBat(state, swapUid, { player: victim });
+    }
+
     const after = currentPlayer(state);
     const shroudUid = findBat(after, 'shroud');
     if (!isSafeCell(state, after, after.at) && shroudUid && batPlayError(state, 'shroud') === null) {
@@ -316,7 +390,7 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
   const turnsToVillage = turnsToCover(villageCost, me.movesLeft, allowance);
   const turnsAfterVillage = roundsUntilDawn(state) - turnsToVillage;
   const carryAllowance = Math.max(1, state.config.baseMove - Math.floor(1 / 2));
-  const escape = nearestRefuge(state, me, VILLAGE);
+  const escape = nearestRefuge(state, me, VILLAGE, true);
   const canEscapeFromVillage =
     turnsAfterVillage >= 0 &&
     escape !== null &&
