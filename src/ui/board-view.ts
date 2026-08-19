@@ -6,13 +6,13 @@ import {
   roundsUntilDawn,
 } from '../game/rules';
 import type { GameState } from '../game/types';
-import boardUrl from '../assets/board.png';
-import { getCalibration } from './calibration';
 import {
-  IMAGE_HEIGHT,
-  IMAGE_WIDTH,
+  CASTLE_RING,
+  CENTER,
+  VIEW_SIZE,
   cellCenter,
   cellHitRadius,
+  ringSectorPath,
   sectorAngle,
   trianglePath,
 } from './geometry';
@@ -33,14 +33,14 @@ export interface BoardViewOptions {
 }
 
 /**
- * 盤面はユーザーが渡した写真そのものを背景として敷き、
- * その上に「役割ごとのポインター」――マスの中心に置いた円――だけを重ねる。
- * 石畳やお城の絵を描き起こすようなことはしない ―― 絵は写真に任せる。
- * ポインターの座標は calibration.ts から読む。盤面のずれは、対局画面ではなく
- * 盤面調整モードで直す。
+ * 盤面は写真ではなく、ルール（同心円4リング＋放射線8本）をそのまま描いた
+ * 図形。マスの色分けも役割（村・洞窟・日陰・城・通常）に沿って塗る
+ * ―― ルールに書かれていない飾りは足さない。
+ * その上に、当たり判定と状態表示を兼ねる円を重ねる（`geometry.ts` が座標計算）。
  */
 export class BoardView {
   readonly svg: SVGSVGElement;
+  private readonly boardLayer = el('g', { class: 'layer-board' });
   private readonly stateLayer = el('g', { class: 'layer-state' });
   private readonly ghostLayer = el('g', { class: 'layer-ghosts' });
   private readonly markerLayer = el('g', { class: 'layer-markers' });
@@ -50,29 +50,56 @@ export class BoardView {
 
   constructor(private readonly options: BoardViewOptions) {
     this.svg = el('svg', {
-      viewBox: `0 0 ${IMAGE_WIDTH} ${IMAGE_HEIGHT}`,
+      viewBox: `0 0 ${VIEW_SIZE} ${VIEW_SIZE}`,
       class: 'board',
       role: 'img',
       'aria-label': 'ヴァンパイア・ハウスの盤面',
     });
-    const image = el('image', {
-      href: boardUrl,
-      x: 0,
-      y: 0,
-      width: IMAGE_WIDTH,
-      height: IMAGE_HEIGHT,
-      class: 'board-photo',
-    });
-    this.svg.append(image, this.stateLayer, this.ghostLayer, this.markerLayer, this.pieceLayer);
+    this.svg.append(this.boardLayer, this.stateLayer, this.ghostLayer, this.markerLayer, this.pieceLayer);
   }
 
   /**
-   * 各マスにつき円1つだけを置く。クリック判定と、合法手/危険などの
-   * 半透明ハイライトを同じ円が兼ねる ―― 見えるものと押せるものを分けない。
-   * 位置と大きさは calibration.ts の現在値から計算する。
+   * 下敷きになる盤面図形（マス1つにつき扇形1枚 or 村の円 or 城の四角）を描く。
+   * 色は役割ごとの塗り分けのみ。座標はすべて geometry.ts の幾何計算から出る。
    */
+  private buildBoardShape(state: GameState): void {
+    const { board } = state;
+
+    this.boardLayer.append(el('circle', { cx: CENTER.x, cy: CENTER.y, r: 418, class: 'board-rings' }));
+
+    for (const id of board.order) {
+      const cell = board.cells[id];
+      if (cell.ring === 0) {
+        this.boardLayer.append(
+          el('circle', { cx: CENTER.x, cy: CENTER.y, r: 58, class: 'cell-shape cell-village' }),
+        );
+        continue;
+      }
+      if (cell.ring === CASTLE_RING) {
+        const c = cellCenter(cell);
+        this.boardLayer.append(
+          el('rect', {
+            x: c.x - 30,
+            y: c.y - 30,
+            width: 60,
+            height: 60,
+            rx: 8,
+            transform: `rotate(45 ${c.x} ${c.y})`,
+            class: 'cell-shape cell-castle',
+          }),
+        );
+        continue;
+      }
+      this.boardLayer.append(
+        el('path', { d: ringSectorPath(cell.ring, cell.sector), class: `cell-shape cell-${cell.kind}` }),
+      );
+    }
+  }
+
   private build(state: GameState): void {
     const { board } = state;
+
+    this.buildBoardShape(state);
 
     for (const id of board.order) {
       const cell = board.cells[id];
@@ -196,11 +223,10 @@ export class BoardView {
 
   /** 夜明けの閃光 */
   flashDawn(): void {
-    const { center } = getCalibration();
     const flash = el('circle', {
-      cx: center.x,
-      cy: center.y,
-      r: Math.max(IMAGE_WIDTH, IMAGE_HEIGHT),
+      cx: CENTER.x,
+      cy: CENTER.y,
+      r: VIEW_SIZE,
       class: 'dawn-flash',
     });
     this.svg.append(flash);

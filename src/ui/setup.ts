@@ -57,7 +57,6 @@ const PARAM_SPECS: ParamSpec[] = [
 export function renderSetup(
   root: HTMLElement,
   onStart: (config: GameConfig) => void,
-  onCalibrate: () => void,
 ): void {
   let playerCount = 2;
   let humanCount = 1;
@@ -98,7 +97,6 @@ export function renderSetup(
       </details>
 
       <button class="primary start" id="start">夜を始める</button>
-      <button class="ghost calibrate-link" id="calibrate">盤面のずれを調整</button>
 
       <details class="rules">
         <summary>遊びかた</summary>
@@ -203,8 +201,6 @@ export function renderSetup(
       config.seed = Math.floor(Math.random() * 1_000_000);
       onStart(config);
     });
-
-    panel.querySelector('#calibrate')!.addEventListener('click', onCalibrate);
   };
 
   draw();

@@ -1,5 +1,4 @@
 import { App } from './ui/app';
-import { renderCalibrateView } from './ui/calibrate-view';
 import { renderSetup } from './ui/setup';
 import type { GameConfig } from './game/types';
 import './styles.css';
@@ -18,13 +17,7 @@ let app: App | null = null;
 function showSetup(): void {
   app?.destroy();
   app = null;
-  renderSetup(root, startGame, showCalibrate);
-}
-
-function showCalibrate(): void {
-  app?.destroy();
-  app = null;
-  renderCalibrateView(root, showSetup);
+  renderSetup(root, startGame);
 }
 
 function startGame(config: GameConfig): void {
