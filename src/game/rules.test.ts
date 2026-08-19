@@ -14,7 +14,9 @@ import {
   moveAllowance,
   moveTo,
   playBat,
-  roundsUntilDawn,
+  dawnRisk,
+  safeRoundsLeft,
+  suckRange,
   swapTargets,
   winnerIndices,
 } from './rules';
@@ -51,8 +53,8 @@ describe('初期状態', () => {
   });
 
   it('村の血はプレイヤー数に比例する', () => {
-    expect(newGame(2).bloodPool).toBe(10);
-    expect(newGame(4).bloodPool).toBe(20);
+    expect(newGame(2).bloodPool).toBe(24);
+    expect(newGame(4).bloodPool).toBe(48);
   });
 
   it('ハンターは人数によらず2体、リング2を同じ向きに周回する', () => {
@@ -178,22 +180,63 @@ describe('血の回収と持ち帰り', () => {
   });
 });
 
-describe('血の重さ', () => {
-  it('血2つごとに移動力が1減り、最低でも1は動ける', () => {
+describe('吸血のダイス', () => {
+  it('村でターンを終えると、目の範囲内の血が手に入る', () => {
+    const seen = new Set<number>();
+    for (let seed = 1; seed <= 60; seed++) {
+      const config = defaultConfig(2, [false, false]);
+      config.seed = seed;
+      const state = createGame(config);
+      teleport(state, 0, VILLAGE);
+      endTurn(state);
+      const got = state.players[0].carrying;
+      expect(got).toBeGreaterThanOrEqual(suckRange(state).min);
+      expect(got).toBeLessThanOrEqual(suckRange(state).max);
+      seen.add(got);
+    }
+    // 出目が固定されていない（ちゃんと振れている）
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('目を1つだけにすれば固定歩数と同じになる', () => {
+    const config = defaultConfig(2, [false, false]);
+    config.suckFaces = [2];
+    const state = createGame(config);
+    teleport(state, 0, VILLAGE);
+    endTurn(state);
+    expect(state.players[0].carrying).toBe(2);
+  });
+
+  it('村に残っている血を超えては吸えない', () => {
+    const config = defaultConfig(2, [false, false]);
+    config.suckFaces = [3];
+    const state = createGame(config);
+    state.bloodPool = 1;
+    teleport(state, 0, VILLAGE);
+    endTurn(state);
+    expect(state.players[0].carrying).toBe(1);
+    expect(state.bloodPool).toBe(0);
+  });
+
+  it('村を通過しただけでは振られない ―― 残ると決めた者にだけダイスが回る', () => {
+    const state = newGame(2);
+    const before = state.bloodPool;
+    teleport(state, 0, cellId(1, 0));
+    moveTo(state, VILLAGE);
+    moveTo(state, cellId(1, 1));
+    endTurn(state);
+    expect(state.players[0].carrying).toBe(0);
+    expect(state.bloodPool).toBe(before);
+  });
+});
+
+describe('移動力', () => {
+  it('何本抱えても足は鈍らない（重さの規則は廃止した）', () => {
     const state = newGame(2);
     const p = state.players[0];
-    const table: Array<[number, number]> = [
-      [0, 3],
-      [1, 3],
-      [2, 2],
-      [3, 2],
-      [4, 1],
-      [5, 1],
-      [10, 1],
-    ];
-    for (const [carrying, expected] of table) {
+    for (const carrying of [0, 1, 2, 3, 4, 5, 10]) {
       p.carrying = carrying;
-      expect(moveAllowance(state, p)).toBe(expected);
+      expect(moveAllowance(state, p)).toBe(state.config.baseMove);
     }
   });
 
@@ -211,24 +254,45 @@ describe('血の重さ', () => {
 });
 
 describe('太陽（夜明け）', () => {
-  it('4ラウンドごとに夜明けが来る', () => {
-    const state = newGame(2);
-    expect(roundsUntilDawn(state)).toBe(4);
-    passRound(state);
-    expect(roundsUntilDawn(state)).toBe(3);
-    passRound(state);
-    passRound(state);
+  it('安全ラウンドのあいだは、どう転んでも朝が来ない', () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      const config = defaultConfig(2, [false, false]);
+      config.seed = seed;
+      const state = createGame(config);
+      expect(safeRoundsLeft(state)).toBe(config.safeRounds);
+      expect(dawnRisk(state)).toBe(0);
+      for (let i = 0; i < config.safeRounds; i++) {
+        passRound(state);
+        expect(state.night).toBe(1);
+      }
+      // 使い切った時点で、毎ラウンドの賭けが始まる
+      expect(safeRoundsLeft(state)).toBe(0);
+      expect(dawnRisk(state)).toBe(config.dawnChance);
+    }
+  });
+
+  it('安全ラウンドを過ぎれば、いつかは必ず朝が来る', () => {
+    const config = defaultConfig(2, [false, false]);
+    config.seed = 5;
+    const state = createGame(config);
+    for (let i = 0; i < 60 && state.night === 1; i++) passRound(state);
+    expect(state.night).toBeGreaterThan(1);
+    // 夜が明ければ安全ラウンドが戻る
+    expect(safeRoundsLeft(state)).toBe(config.safeRounds);
+  });
+
+  it('夜明けの確率を0にすれば、夜は永遠に続く', () => {
+    const config = defaultConfig(2, [false, false]);
+    config.dawnChance = 0;
+    const state = createGame(config);
+    for (let i = 0; i < 30; i++) passRound(state);
     expect(state.night).toBe(1);
-    passRound(state);
-    expect(state.night).toBe(2);
-    expect(roundsUntilDawn(state)).toBe(4);
   });
 
   it('日陰以外にいると焼かれ、血は村へ還る', () => {
     const state = newGame(2);
-    passRound(state);
-    passRound(state);
-    passRound(state);
+    state.config.dawnChance = 1; // 次のラウンドで必ず朝にする
+    for (let i = 0; i < state.config.safeRounds; i++) passRound(state);
     teleport(state, 0, VILLAGE);
     state.players[0].carrying = 3;
     state.bloodPool = 0;
@@ -471,10 +535,10 @@ describe('決着', () => {
 
   it('規定の夜数を終えるとゲームが終わる', () => {
     const state = newGame(2);
-    for (let i = 0; i < state.config.roundsPerNight * state.config.totalNights; i++) {
-      passRound(state);
-    }
+    // 夜の長さはダイス次第なので、十分な回数だけ回して終わることを確かめる
+    for (let i = 0; i < 500 && state.phase !== 'gameover'; i++) passRound(state);
     expect(state.phase).toBe('gameover');
+    expect(state.night).toBe(state.config.totalNights);
     expect(legalMoves(state)).toEqual([]);
   });
 

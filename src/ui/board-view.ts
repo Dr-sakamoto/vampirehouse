@@ -3,7 +3,7 @@ import {
   hunterNextCell,
   isSafeCell,
   legalMoves,
-  roundsUntilDawn,
+  dawnRisk,
 } from '../game/rules';
 import type { GameState } from '../game/types';
 import {
@@ -147,7 +147,8 @@ export class BoardView {
     const me = currentPlayer(state);
     const hunterNow = new Set(state.hunters.map((h) => `r${h.ring}s${h.sector}`));
     const hunterSoon = new Set(state.hunters.map(hunterNextCell));
-    const dawnNext = roundsUntilDawn(state) === 1 && state.phase === 'playing';
+    // 確定の夜が尽きた瞬間から、どのマスが「危ない」かを塗る
+    const dawnNext = dawnRisk(state) > 0 && state.phase === 'playing';
 
     for (const [id, node] of this.stateNodes) {
       const cell = state.board.cells[id];

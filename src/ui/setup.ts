@@ -5,7 +5,8 @@ import type { GameConfig } from '../game/types';
 interface ParamSpec {
   key:
     | 'baseMove'
-    | 'roundsPerNight'
+    | 'safeRounds'
+    | 'dawnPercent'
     | 'totalNights'
     | 'bloodPool'
     | 'bloodValue'
@@ -27,12 +28,20 @@ const PARAM_SPECS: ParamSpec[] = [
     hint: (v) => `毎ターン ${v} 歩`,
   },
   {
-    key: 'roundsPerNight',
-    label: '1夜のラウンド数',
-    min: 2,
+    key: 'safeRounds',
+    label: '朝が来ないラウンド数',
+    min: 0,
     max: 8,
     step: 1,
-    hint: (v) => `${v} ラウンドで夜明け`,
+    hint: (v) => `${v} ラウンドは確定で夜`,
+  },
+  {
+    key: 'dawnPercent',
+    label: 'その後の夜明け確率',
+    min: 5,
+    max: 100,
+    step: 5,
+    hint: (v) => `毎ラウンド ${v}%`,
   },
   {
     key: 'totalNights',
@@ -77,7 +86,8 @@ export function renderSetup(
   const base = defaultConfig(playerCount);
   const params: Record<ParamSpec['key'], number> = {
     baseMove: base.baseMove,
-    roundsPerNight: base.roundsPerNight,
+    safeRounds: base.safeRounds,
+    dawnPercent: Math.round(base.dawnChance * 100),
     totalNights: base.totalNights,
     bloodPool: base.bloodPool,
     bloodValue: base.bloodValue,
@@ -119,7 +129,8 @@ export function renderSetup(
           <li><b>移動</b> 毎ターン3歩。同心円に沿って横へ、放射線に沿って内外へ。</li>
           <li><b>血</b> 中心の村でターンを終えるたびに1つ吸える。自分の城に入った瞬間に得点になる。持ち帰るまでは0点。</li>
           <li><b>得点</b> 同時に運んでいる血は、1本目10点・2本目20点・3本目30点と積み上がる（3本まとめて持ち帰れば60点）。</li>
-          <li><b>重さ</b> 血2つごとに移動力が1減る。欲張るほど帰り道は遠い。</li>
+          <li><b>吸血</b> 村でターンを終えるたびに <b>1〜3</b> 本吸える。何本出るかは振ってみるまで分からない。何本抱えても足は鈍らない。</li>
+          <li><b>朝</b> 最初の <b>3</b> ラウンドは必ず夜が続く。そのあとは<b>毎ラウンド 1/3 で朝が来る</b>。日陰か城にいなければ、抱えた血をすべて失う。</li>
           <li><b>太陽</b> 4ラウンドごとに夜が明ける。避難所か城にいない者は焼かれ、抱えた血をすべて失う。</li>
           <li><b>避難所</b> 洞窟4つ＋テント2つの計6マスだけ。<b>すべて定員1人</b>。テント（リング2）はハンターの巡回路と重なっている。</li>
           <li><b>ハンター</b> 黄色い三角。リング2を1ラウンドに1マスずつ周回する。触れれば即死。位置も進路も読める。</li>
@@ -200,7 +211,8 @@ export function renderSetup(
     panel.querySelector('#params-reset')!.addEventListener('click', () => {
       const defaults = defaultConfig(playerCount);
       params.baseMove = defaults.baseMove;
-      params.roundsPerNight = defaults.roundsPerNight;
+      params.safeRounds = defaults.safeRounds;
+      params.dawnPercent = Math.round(defaults.dawnChance * 100);
       params.totalNights = defaults.totalNights;
       params.bloodPool = defaults.bloodPool;
       params.bloodValue = defaults.bloodValue;
@@ -214,7 +226,8 @@ export function renderSetup(
       const bots = Array.from({ length: playerCount }, (_, i) => i >= humanCount);
       const config = defaultConfig(playerCount, bots);
       config.baseMove = params.baseMove;
-      config.roundsPerNight = params.roundsPerNight;
+      config.safeRounds = params.safeRounds;
+      config.dawnChance = params.dawnPercent / 100;
       config.totalNights = params.totalNights;
       config.bloodPool = params.bloodPool;
       config.bloodValue = params.bloodValue;

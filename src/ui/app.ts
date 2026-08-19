@@ -14,7 +14,9 @@ import {
   legalMoves,
   moveTo,
   playBat,
-  roundsUntilDawn,
+  dawnRisk,
+  safeRoundsLeft,
+  suckRange,
   stealTargets,
   swapTargets,
   winnerIndices,
@@ -240,10 +242,12 @@ export class App {
     const s = this.state;
     const node = this.q('status');
     const over = s.phase === 'gameover';
-    const untilDawn = over ? 0 : roundsUntilDawn(s);
+    const safeLeft = over ? 0 : safeRoundsLeft(s);
+    const risk = over ? 0 : dawnRisk(s);
     const finale = isFinalNight(s);
 
-    node.className = `status${over ? ' is-over' : untilDawn === 1 ? ' is-urgent' : ''}`;
+    // 確定の夜を使い切ったら、あとは毎ラウンドの賭け ―― そこからが「急ぐ」局面
+    node.className = `status${over ? ' is-over' : risk > 0 ? ' is-urgent' : ''}`;
     node.innerHTML = `
       <span class="gauge gauge-night" title="${
         over ? `全 ${s.config.totalNights} 夜が明けた` : `第 ${s.night} 夜 / 全 ${s.config.totalNights} 夜`
@@ -252,10 +256,20 @@ export class App {
         <span class="pips">${pips(s.config.totalNights, over ? s.config.totalNights : s.night)}</span>
       </span>
       <span class="gauge gauge-dawn" title="${
-        over ? '陽が昇りきった' : `夜明けまで ${untilDawn} ラウンド`
+        over
+          ? '陽が昇りきった'
+          : risk > 0
+            ? `確定の夜は尽きた。このラウンドの終わりに ${Math.round(risk * 100)}% で朝が来る`
+            : `あと ${safeLeft} ラウンドは朝が来ない。そのあとは毎ラウンド ${Math.round(
+                s.config.dawnChance * 100,
+              )}%`
       }">
         <span class="gauge-icon">${ICON.dawn}</span>
-        <span class="pips">${pips(s.config.roundsPerNight, untilDawn)}</span>
+        ${
+          risk > 0
+            ? `<b class="risk">${Math.round(risk * 100)}%</b>`
+            : `<span class="pips">${pips(s.config.safeRounds, safeLeft)}</span>`
+        }
       </span>
       <span class="stat stat-blood" title="${over ? '村に残った血' : '村に残っている血'} ${s.bloodPool}">
         <span class="stat-icon">${ICON.blood}</span><b>${s.bloodPool}</b>
@@ -421,11 +435,15 @@ export class App {
     `;
     node.append(info);
 
+    const suck = suckRange(s);
     const end = document.createElement('button');
     end.className = 'primary';
-    end.title = gain ? '血を1つ吸ってターン終了' : 'ターン終了';
+    // 何本吸えるかは振ってみるまで分からない。幅だけ見せて、残るかどうかを選ばせる
+    end.title = gain
+      ? `ここでターンを終えると血を ${suck.min}〜${suck.max} 吸える（平均 ${suck.mean.toFixed(1)}）`
+      : 'ターン終了';
     end.innerHTML = `${
-      gain ? `<span class="btn-gain">${ICON.blood}+1</span>` : ''
+      gain ? `<span class="btn-gain">${ICON.blood}+${suck.min}〜${suck.max}</span>` : ''
     }<span class="btn-icon">${ICON.end}</span>`;
     end.addEventListener('click', () => this.handleEndTurn());
     node.append(end);
