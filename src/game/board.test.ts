@@ -77,33 +77,45 @@ describe('盤面の構造', () => {
     }
   });
 
-  it('日陰（テント）は深部リング2の2マスだけ', () => {
+  it('日陰（テント）は4マス。リング2の南北とリング3の東西', () => {
     const board = createBoard();
-    expect(SHADE_COUNT).toBe(2);
+    expect(SHADE_COUNT).toBe(4);
     expect(board.shadeCells).toHaveLength(SHADE_COUNT);
-    // テントはハンターの巡回リング(2)上にあり、常に使えるとは限らない
-    const rings = board.shadeCells.map((id) => board.cells[id].ring);
-    expect(rings).toEqual([2, 2]);
-    // 盤面の反対側同士。片方が塞がれても、もう片方は遠い
-    const sectors = board.shadeCells.map((id) => board.cells[id].sector).sort();
-    expect(Math.abs(sectors[0] - sectors[1])).toBe(SECTORS / 2);
-  });
-
-  it('避難所は洞窟4＋テント2の6マス。城の外側リングには1つも無い', () => {
-    const board = createBoard();
-    expect(board.refugeCells).toHaveLength(CAVE_COUNT + SHADE_COUNT);
-    expect(board.refugeCells).toEqual(
-      expect.arrayContaining([...board.caveCells, ...board.shadeCells]),
-    );
-    // 城の目と鼻の先（最外リング）に避難所があると、帰るか隠れるかの判断が消える
-    for (const id of board.refugeCells) {
-      expect(board.cells[id].ring).toBeLessThan(RING_COUNT);
+    // リング2の2マスはハンターの巡回リング上にあり、常に使えるとは限らない
+    const rings = board.shadeCells.map((id) => board.cells[id].ring).sort();
+    expect(rings).toEqual([2, 2, 3, 3]);
+    // 同じリングの2マスは盤面の反対側同士。片方が塞がれても、もう片方は遠い
+    for (const ring of [2, 3]) {
+      const sectors = board.shadeCells
+        .filter((id) => board.cells[id].ring === ring)
+        .map((id) => board.cells[id].sector)
+        .sort();
+      expect(Math.abs(sectors[0] - sectors[1])).toBe(SECTORS / 2);
     }
   });
 
-  it('洞窟は4つあり、城の直通ルートから1歩ずれている', () => {
+  it('避難所はテント4＋洞窟2の6マス。うち4マスは盤の内側に残る', () => {
     const board = createBoard();
-    expect(board.caveCells).toHaveLength(4);
+    expect(board.refugeCells).toHaveLength(CAVE_COUNT + SHADE_COUNT);
+    expect(board.refugeCells).toHaveLength(6);
+    expect(board.refugeCells).toEqual(
+      expect.arrayContaining([...board.caveCells, ...board.shadeCells]),
+    );
+    // 洞窟は最外リングへ出したが、内側の椅子（テント）は残す。
+    // 盤の中ほどに避難所が1つも無いと、村で粘った者の逃げ場が城だけになる
+    const inner = board.refugeCells.filter((id) => board.cells[id].ring < RING_COUNT);
+    expect(inner).toHaveLength(4);
+  });
+
+  it('洞窟は最外リングの左右2つ。城の直通ルートから1歩ずれている', () => {
+    const board = createBoard();
+    expect(board.caveCells).toHaveLength(2);
+    for (const cave of board.caveCells) {
+      expect(board.cells[cave].ring).toBe(RING_COUNT);
+    }
+    // 東西の2マス ＝ 盤面の反対側同士
+    const sectors = board.caveCells.map((id) => board.cells[id].sector).sort();
+    expect(Math.abs(sectors[0] - sectors[1])).toBe(SECTORS / 2);
     const castleSectors = board.castleCells.map((c) => board.cells[c].sector);
     for (const cave of board.caveCells) {
       expect(castleSectors).not.toContain(board.cells[cave].sector);
