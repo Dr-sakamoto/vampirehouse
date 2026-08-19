@@ -98,8 +98,15 @@ export class BoardView {
       this.boardLayer.append(
         el('path', { d: ringSectorPath(cell.ring, cell.sector), class: `cell-shape cell-${cell.kind}` }),
       );
+      // 洞窟もテントも「陽を凌げるマス」。同じ縁取りで、避難所であることを示す
       if (cell.kind === 'cave' || cell.kind === 'shade') {
         const c = cellCenter(cell);
+        this.boardLayer.append(
+          el('path', {
+            d: ringSectorPath(cell.ring, cell.sector),
+            class: 'cell-refuge-edge',
+          }),
+        );
         const icon = el('text', {
           x: c.x,
           y: c.y,

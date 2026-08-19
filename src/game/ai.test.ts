@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { botTakeTurn } from './ai';
-import { createGame, defaultConfig } from './rules';
+import { cellId } from './board';
+import { createGame, defaultConfig, deliveryScore } from './rules';
 import type { GameState } from './types';
 
 function newBotGame(playerCount: number, seed = 1): GameState {
@@ -68,10 +69,23 @@ describe('ボット同士の対戦', () => {
 
   it('得点は最終夜ボーナスを含めて妥当な範囲に収まる', () => {
     const state = playOut(2, 11);
+    // 盤上の血を1人で独占し、最終夜に一度で持ち帰ったときが上限
+    const ceiling = deliveryScore(state, state.config.bloodPool);
     for (const p of state.players) {
       expect(p.score).toBeGreaterThanOrEqual(0);
-      expect(p.score).toBeLessThanOrEqual(state.config.bloodPool * 2);
+      expect(p.score).toBeLessThanOrEqual(ceiling);
     }
+  });
+
+  it('血1つが10点なので、勝者の得点は数十点の桁になる', () => {
+    let winners = 0;
+    let sum = 0;
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const state = playOut(2, seed);
+      sum += Math.max(...state.players.map((p) => p.score));
+      winners += 1;
+    }
+    expect(sum / winners).toBeGreaterThan(30);
   });
 
   it('最終夜には血を抱えたまま終わらない', () => {
@@ -88,25 +102,25 @@ describe('ボット同士の対戦', () => {
 });
 
 describe('ボットの判断', () => {
-  it('最終夜の最後のラウンドでは、日陰ではなく城を目指す', () => {
+  it('最終夜の最後のラウンドでは、避難所ではなく城を目指す', () => {
     const state = newBotGame(2);
     state.night = state.config.totalNights;
     state.round = state.config.roundsPerNight * state.config.totalNights;
     state.current = 0;
 
     const bot = state.players[0];
-    const shade = state.board.shadeCells.find((id) => state.board.cells[id].ring === 4)!;
-    // 日陰の隣、かつ城からも遠くないマスに、血を抱えて立たせる
-    bot.at = state.board.cells[shade].neighbors.find(
-      (id) => state.board.cells[id].ring === 4,
-    )!;
+    // 洞窟（避難所）の隣、かつ城まで2歩のマスに、血を抱えて立たせる
+    const cave = cellId(3, 0);
+    bot.at = cellId(3, 1);
     bot.carrying = 2;
     bot.movesLeft = 2;
     state.players[1].at = state.board.castleCells[1];
 
     botTakeTurn(state);
-    // 目の前の日陰へ逃げ込むのではなく、城の方角へ動いている
-    expect(state.players[0].at).not.toBe(shade);
+    // 目の前の洞窟へ逃げ込むのではなく、城に入って得点にしている
+    expect(state.players[0].at).not.toBe(cave);
+    expect(state.players[0].at).toBe(state.board.castleCells[0]);
+    expect(state.players[0].score).toBe(90);
   });
 
   it('村の血が尽きたら、ボットは安全な場所で朝を待つ', () => {

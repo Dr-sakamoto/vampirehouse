@@ -3,7 +3,13 @@ import { PLAYER_COLORS, PLAYER_NAMES, defaultConfig } from '../game/rules';
 import type { GameConfig } from '../game/types';
 
 interface ParamSpec {
-  key: 'baseMove' | 'roundsPerNight' | 'totalNights' | 'bloodPool' | 'batsPerTurn';
+  key:
+    | 'baseMove'
+    | 'roundsPerNight'
+    | 'totalNights'
+    | 'bloodPool'
+    | 'bloodValue'
+    | 'batsPerTurn';
   label: string;
   min: number;
   max: number;
@@ -45,6 +51,14 @@ const PARAM_SPECS: ParamSpec[] = [
     hint: (v) => `血 ${v} 個`,
   },
   {
+    key: 'bloodValue',
+    label: '血1つの得点',
+    min: 1,
+    max: 30,
+    step: 1,
+    hint: (v) => `1本目 ${v} 点 / 2本まとめて ${v * 3} 点`,
+  },
+  {
     key: 'batsPerTurn',
     label: '1ターンのコウモリ上限',
     min: 1,
@@ -66,6 +80,7 @@ export function renderSetup(
     roundsPerNight: base.roundsPerNight,
     totalNights: base.totalNights,
     bloodPool: base.bloodPool,
+    bloodValue: base.bloodValue,
     batsPerTurn: base.batsPerTurn,
   };
   let bloodPoolTouched = false;
@@ -79,7 +94,7 @@ export function renderSetup(
     panel.className = 'setup-panel';
     panel.innerHTML = `
       <h1>ヴァンパイア・ハウス</h1>
-      <p class="tagline">中心の村で血を吸い、四隅の城へ持ち帰る。<br>朝までに帰れなければ、すべて失う。</p>
+      <p class="tagline">中心の村で血を吸い、四隅の城へ持ち帰る。<br>朝までに帰れなければ、すべて失う。奪われても、失う。</p>
 
       <div class="setup-field">
         <span class="setup-label">人数</span>
@@ -103,12 +118,16 @@ export function renderSetup(
         <ul>
           <li><b>移動</b> 毎ターン3歩。同心円に沿って横へ、放射線に沿って内外へ。</li>
           <li><b>血</b> 中心の村でターンを終えるたびに1つ吸える。自分の城に入った瞬間に得点になる。持ち帰るまでは0点。</li>
+          <li><b>得点</b> 同時に運んでいる血は、1本目10点・2本目20点・3本目30点と積み上がる（3本まとめて持ち帰れば60点）。</li>
           <li><b>重さ</b> 血2つごとに移動力が1減る。欲張るほど帰り道は遠い。</li>
-          <li><b>太陽</b> 4ラウンドごとに夜が明ける。日陰か城にいない者は焼かれ、抱えた血をすべて失う。</li>
+          <li><b>太陽</b> 4ラウンドごとに夜が明ける。避難所か城にいない者は焼かれ、抱えた血をすべて失う。</li>
+          <li><b>避難所</b> 洞窟4つ＋テント2つの計6マスだけ。<b>すべて定員1人</b>。テント（リング2）はハンターの巡回路と重なっている。</li>
           <li><b>ハンター</b> 黄色い三角。リング2を1ラウンドに1マスずつ周回する。触れれば即死。位置も進路も読める。</li>
-          <li><b>洞窟</b> 通るとコウモリを1枚引ける。同じ洞窟は一夜に1回、1ターンに1枚まで。</li>
-          <li><b>日陰</b> 定員1人。深部（リング2）の日陰はハンターの巡回路と重なっている。</li>
-          <li><b>決着</b> 4夜が明けたら終わり。最終夜の持ち帰りは2点。</li>
+          <li><b>洞窟</b> 通るとコウモリを1枚引ける。同じ洞窟は一夜に1回、1ターンに1枚まで。日陰も兼ねる。</li>
+          <li><b>噛みつき</b> 血を積んだ相手のマスへ踏み込むと、血を1つ奪う（1ターン1回）。村と城では起こらない。</li>
+          <li><b>仕留め</b> 誘導・影渡りで相手をハンターに触れさせると、相手の血はすべて自分のものになる。</li>
+          <li><b>先手</b> 夜ごとに1つずつ回る。</li>
+          <li><b>決着</b> 4夜が明けたら終わり。最終夜の持ち帰りは3倍。</li>
         </ul>
         <h3>コウモリ</h3>
         <ul class="bat-list">
@@ -184,6 +203,7 @@ export function renderSetup(
       params.roundsPerNight = defaults.roundsPerNight;
       params.totalNights = defaults.totalNights;
       params.bloodPool = defaults.bloodPool;
+      params.bloodValue = defaults.bloodValue;
       params.batsPerTurn = defaults.batsPerTurn;
       bloodPoolTouched = false;
       paramsOpen = true;
@@ -197,6 +217,7 @@ export function renderSetup(
       config.roundsPerNight = params.roundsPerNight;
       config.totalNights = params.totalNights;
       config.bloodPool = params.bloodPool;
+      config.bloodValue = params.bloodValue;
       config.batsPerTurn = params.batsPerTurn;
       config.seed = Math.floor(Math.random() * 1_000_000);
       onStart(config);

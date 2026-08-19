@@ -6,7 +6,7 @@ import {
   createGame,
   currentPlayer,
   defaultConfig,
-  deliveryValue,
+  deliveryScore,
   endTurn,
   flightTargets,
   isFinalNight,
@@ -16,6 +16,7 @@ import {
   playBat,
   roundsUntilDawn,
   stealTargets,
+  swapTargets,
   winnerIndices,
 } from '../game/rules';
 import type { BatCard, GameConfig, GameState } from '../game/types';
@@ -25,6 +26,7 @@ type Targeting =
   | { kind: 'none' }
   | { kind: 'flight'; card: BatCard }
   | { kind: 'steal'; card: BatCard }
+  | { kind: 'swap'; card: BatCard }
   | { kind: 'lure'; card: BatCard };
 
 const BOT_STEP_MS = 420;
@@ -122,7 +124,12 @@ export class App {
     if (!this.humanTurn) return;
     if (batPlayError(this.state, card.kind) !== null) return;
 
-    if (card.kind === 'flight' || card.kind === 'steal' || card.kind === 'lure') {
+    if (
+      card.kind === 'flight' ||
+      card.kind === 'steal' ||
+      card.kind === 'swap' ||
+      card.kind === 'lure'
+    ) {
       this.targeting =
         this.targeting.kind !== 'none' && this.targeting.card.uid === card.uid
           ? { kind: 'none' }
@@ -202,7 +209,7 @@ export class App {
           `<i class="${i < untilDawn ? 'on' : 'off'}"></i>`).join('')}</span>
         <strong>${untilDawn} ラウンド</strong>
       </div>
-      ${finale ? '<div class="finale">最終夜 ―― 持ち帰った血は 2 点</div>' : ''}
+      ${finale ? '<div class="finale">最終夜 ―― 持ち帰った血は 3 倍</div>' : ''}
       ${
         untilDawn === 1
           ? finale
@@ -332,15 +339,18 @@ export class App {
     const atVillage = s.board.cells[me.at].kind === 'village';
     info.innerHTML = atVillage
       ? `村にいる。<strong>ここでターンを終えれば血を1つ吸える</strong>（運搬中 ${me.carrying} → ${me.carrying + (s.bloodPool > 0 ? 1 : 0)}）。`
-      : `残り移動力 <strong>${me.movesLeft}</strong>。光った隣のマスをクリックして進む。`;
+      : `残り移動力 <strong>${me.movesLeft}</strong>。光った隣のマスをクリックして進む。` +
+        `${s.players.some((p) => p.index !== me.index && p.at !== me.at && p.carrying > 0) ? '血を積んだ相手のマスへ踏み込めば、1つ噛み取れる。' : ''}`;
     node.append(info);
 
     if (me.carrying > 0) {
       const carry = document.createElement('p');
       carry.className = 'turn-info subtle';
-      carry.textContent = `血を ${me.carrying} 抱えている（城まで運べば ${
-        me.carrying * deliveryValue(s)
-      } 点）。重いぶん足は鈍い。`;
+      const now = deliveryScore(s, me.carrying);
+      const more = deliveryScore(s, me.carrying + 1) - now;
+      carry.innerHTML =
+        `血を ${me.carrying} 抱えている（いま城まで運べば <strong>${now} 点</strong>）。` +
+        `重いぶん足は鈍いが、もう1つ増やせば次の1本は ${more} 点になる。`;
       node.append(carry);
     }
 
@@ -373,6 +383,26 @@ export class App {
         const button = document.createElement('button');
         button.style.setProperty('--player-color', victim.color);
         button.innerHTML = `<span class="dot"></span>${victim.name}<small>血 ${victim.carrying}</small>`;
+        button.addEventListener('click', () => {
+          playBat(s, card!.uid, { player: index });
+          this.targeting = { kind: 'none' };
+          this.render();
+        });
+        row.append(button);
+      }
+      panel.append(row);
+    } else if (this.targeting.kind === 'swap') {
+      title.textContent = `《${spec!.name}》 位置を入れ替える相手を選ぶ`;
+      const row = document.createElement('div');
+      row.className = 'targeting-options';
+      for (const index of swapTargets(s)) {
+        const other = s.players[index];
+        const theirCell = s.board.cells[other.at];
+        const button = document.createElement('button');
+        button.style.setProperty('--player-color', other.color);
+        button.innerHTML =
+          `<span class="dot"></span>${other.name}` +
+          `<small>${theirCell.kind === 'shade' ? 'テント' : theirCell.kind === 'cave' ? '洞窟' : '陽の下'}・血 ${other.carrying}</small>`;
         button.addEventListener('click', () => {
           playBat(s, card!.uid, { player: index });
           this.targeting = { kind: 'none' };
