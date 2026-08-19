@@ -136,18 +136,24 @@ export function renderCalibrateView(root: HTMLElement, onClose: () => void): voi
     const handle = el('circle', { r: 13, class: `handle ${cls}` });
     handle.addEventListener('pointerdown', (evt) => {
       evt.preventDefault();
-      handle.setPointerCapture(evt.pointerId);
+      // ハンドル自身に pointermove/pointerup を紐付けて setPointerCapture に
+      // 頼ると、Safari(iOS) では SVG 要素上でキャプチャ後の pointermove が
+      // 飛んでこないことがあり、ドラッグが動かせなくなる。window で拾う。
       const move = (moveEvt: PointerEvent) => {
+        if (moveEvt.pointerId !== evt.pointerId) return;
         onDrag(toSvgPoint(moveEvt));
         update();
       };
-      const up = () => {
-        handle.removeEventListener('pointermove', move);
-        handle.removeEventListener('pointerup', up);
+      const up = (upEvt: PointerEvent) => {
+        if (upEvt.pointerId !== evt.pointerId) return;
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
         commit();
       };
-      handle.addEventListener('pointermove', move);
-      handle.addEventListener('pointerup', up);
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
     });
     return handle;
   }
