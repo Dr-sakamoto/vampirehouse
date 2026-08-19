@@ -12,8 +12,8 @@ import {
   VIEW_SIZE,
   cellCenter,
   cellHitRadius,
+  hunterFacingAngle,
   ringSectorPath,
-  sectorAngle,
   trianglePath,
 } from './geometry';
 
@@ -178,7 +178,7 @@ export class BoardView {
       const cell = state.board.cells[hunterNextCell(hunter)];
       const p = cellCenter(cell);
       this.ghostLayer.append(
-        el('path', { d: trianglePath(p, 24, sectorAngle(cell.sector)), class: 'hunter-ghost' }),
+        el('path', { d: trianglePath(p, 24, hunterFacingAngle(hunter)), class: 'hunter-ghost' }),
       );
     }
 
@@ -187,7 +187,7 @@ export class BoardView {
       const cell = state.board.cells[`r${hunter.ring}s${hunter.sector}`];
       const p = cellCenter(cell);
       const group = el('g', { class: 'hunter' });
-      group.append(el('path', { d: trianglePath(p, 27, sectorAngle(cell.sector)), class: 'hunter-body' }));
+      group.append(el('path', { d: trianglePath(p, 27, hunterFacingAngle(hunter)), class: 'hunter-body' }));
       const label = el('text', {
         x: p.x,
         y: p.y + 5,

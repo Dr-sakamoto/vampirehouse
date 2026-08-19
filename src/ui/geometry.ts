@@ -1,5 +1,5 @@
 import { CASTLE_RING } from '../game/board';
-import type { Cell } from '../game/types';
+import type { Cell, Hunter } from '../game/types';
 
 export interface Point {
   x: number;
@@ -61,13 +61,18 @@ export function cellHitRadius(cell: Cell): number {
   return Math.max(18, Math.min(radialGap, arcGap) * 0.42);
 }
 
-/** ハンター・移動予告に使う小さな三角 */
+/** ハンター・移動予告に使う小さな三角。先端が angle の方向を向く */
 export function trianglePath(center: Point, size: number, angle: number): string {
   const pts = [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3].map((offset) => {
-    const a = angle + offset - Math.PI / 2;
+    const a = angle + offset;
     return `${(center.x + size * Math.cos(a)).toFixed(2)},${(center.y + size * Math.sin(a)).toFixed(2)}`;
   });
   return `M ${pts.join(' L ')} Z`;
+}
+
+/** ハンターの進行方向（次のセクターへ向かう接線方向）の角度。三角の先端をこれに合わせる */
+export function hunterFacingAngle(hunter: Pick<Hunter, 'sector' | 'dir'>): number {
+  return sectorAngle(hunter.sector) + hunter.dir * (Math.PI / 2);
 }
 
 /** ring/sector 1マスぶんの扇形（ドーナツ片）。盤面の下敷きを描くのに使う */
