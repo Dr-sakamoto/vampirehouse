@@ -24,6 +24,7 @@ import { BoardView } from './board-view';
 
 type Targeting =
   | { kind: 'none' }
+  | { kind: 'simple'; card: BatCard }
   | { kind: 'flight'; card: BatCard }
   | { kind: 'steal'; card: BatCard }
   | { kind: 'swap'; card: BatCard }
@@ -178,21 +179,12 @@ export class App {
     if (!this.humanTurn) return;
     if (batPlayError(this.state, card.kind) !== null) return;
 
-    if (
-      card.kind === 'flight' ||
-      card.kind === 'steal' ||
-      card.kind === 'swap' ||
-      card.kind === 'lure'
-    ) {
-      this.targeting =
-        this.targeting.kind !== 'none' && this.targeting.card.uid === card.uid
-          ? { kind: 'none' }
-          : ({ kind: card.kind, card } as Targeting);
-      this.render();
-      return;
-    }
-
-    playBat(this.state, card.uid);
+    // どのカードも、まず効果の説明を出す。即座には撃たない
+    const kind = card.kind === 'dash' || card.kind === 'shroud' ? 'simple' : card.kind;
+    this.targeting =
+      this.targeting.kind !== 'none' && this.targeting.card.uid === card.uid
+        ? { kind: 'none' }
+        : ({ kind, card } as Targeting);
     this.render();
   }
 
@@ -443,7 +435,25 @@ export class App {
     title.innerHTML = `<span class="bat-icon">${spec!.icon}</span><span class="bat-name">${spec!.name}</span>`;
     panel.append(title);
 
-    if (this.targeting.kind === 'flight') {
+    // 効果はここに常に文字で出す。手札のチップはアイコンと名前だけなので、
+    // 実際に何が起きるかはここでしか読めない
+    const desc = document.createElement('p');
+    desc.className = 'targeting-desc';
+    desc.textContent = spec!.text;
+    panel.append(desc);
+
+    if (this.targeting.kind === 'simple') {
+      const use = document.createElement('button');
+      use.className = 'primary use-bat';
+      use.title = `${spec!.name}を使う`;
+      use.innerHTML = `<span class="bat-icon">${spec!.icon}</span>使う`;
+      use.addEventListener('click', () => {
+        playBat(s, card!.uid);
+        this.targeting = { kind: 'none' };
+        this.render();
+      });
+      panel.append(use);
+    } else if (this.targeting.kind === 'flight') {
       // 行き先は盤面が光って示す。ここでは「盤を狙え」とだけ見せる
       title.title = `${spec!.name} — 降り立つ避難所（洞窟・テント）を盤面から選ぶ`;
       title.insertAdjacentHTML(

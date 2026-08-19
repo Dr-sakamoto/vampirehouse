@@ -492,6 +492,9 @@ button.primary { display: flex; align-items: center; justify-content: center; ga
 .targeting-title { display: flex; align-items: center; gap: 6px; margin: 0; }
 .targeting-title .bat-icon { font-size: 17px; }
 .targeting-title .bat-name { font-size: 13px; }
+.targeting-desc { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.use-bat { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.use-bat .bat-icon { font-size: 17px; }
 .targeting-title .aim { margin-left: auto; font-size: 13px; }
 .targeting-options { display: flex; flex-wrap: wrap; gap: 6px; }
 .targeting-options button {
