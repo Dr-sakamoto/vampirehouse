@@ -77,22 +77,39 @@ export class BoardView {
       }
       if (cell.ring === CASTLE_RING) {
         const c = cellCenter(cell);
-        this.boardLayer.append(
-          el('rect', {
-            x: c.x - 30,
-            y: c.y - 30,
-            width: 60,
-            height: 60,
-            rx: 8,
-            transform: `rotate(45 ${c.x} ${c.y})`,
-            class: 'cell-shape cell-castle',
-          }),
-        );
+        const owner = cell.castleOf !== undefined ? state.players[cell.castleOf] : undefined;
+        const rect = el('rect', {
+          x: c.x - 30,
+          y: c.y - 30,
+          width: 60,
+          height: 60,
+          rx: 8,
+          transform: `rotate(45 ${c.x} ${c.y})`,
+          class: 'cell-shape cell-castle',
+        });
+        if (owner) {
+          rect.style.fill = owner.color;
+          rect.style.fillOpacity = '0.38';
+          rect.style.stroke = owner.color;
+        }
+        this.boardLayer.append(rect);
         continue;
       }
       this.boardLayer.append(
         el('path', { d: ringSectorPath(cell.ring, cell.sector), class: `cell-shape cell-${cell.kind}` }),
       );
+      if (cell.kind === 'cave' || cell.kind === 'shade') {
+        const c = cellCenter(cell);
+        const icon = el('text', {
+          x: c.x,
+          y: c.y,
+          class: `cell-icon cell-icon-${cell.kind}`,
+          'text-anchor': 'middle',
+          'dominant-baseline': 'central',
+        });
+        icon.textContent = cell.kind === 'cave' ? '🦇' : '⛺';
+        this.boardLayer.append(icon);
+      }
     }
   }
 
