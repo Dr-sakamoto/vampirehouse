@@ -159,6 +159,15 @@ button.ghost { background: transparent; }
 .cell-shade { fill: var(--shade); fill-opacity: 0.32; }
 .cell-castle { fill: var(--night-2); stroke: var(--edge); stroke-width: 3; }
 
+.cell-icon {
+  font-size: 26px;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--night-0);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
 /* --- 当たり判定と状態表示。1マス1要素が両方を兼ねる --- */
 
 .state { fill: transparent; stroke: none; cursor: default; }
