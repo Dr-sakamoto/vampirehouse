@@ -1,5 +1,6 @@
 import { BAT_ORDER, BAT_SPECS } from '../game/bats';
-import { PLAYER_COLORS, PLAYER_NAMES, defaultConfig } from '../game/rules';
+import { PLAYER_COLORS, PLAYER_NAMES, defaultConfig, tideChance } from '../game/rules';
+import { THRALL_ORDER, THRALL_SPECS } from '../game/thralls';
 import type { GameConfig } from '../game/types';
 
 interface ParamSpec {
@@ -103,12 +104,34 @@ export function renderSetup(
         <ul>
           <li><b>移動</b> 毎ターン3歩。同心円に沿って横へ、放射線に沿って内外へ。</li>
           <li><b>血</b> 中心の村でターンを終えるたびに1つ吸える。自分の城に入った瞬間に得点になる。持ち帰るまでは0点。</li>
+          <li><b>月潮</b> 毎ラウンドの終わりに 2d4。指されたリングに立っている者は全員、血を1つ吸える。
+            立ち止まる場所を決めるときに出目はまだ出ていない ―― そこが賭け。</li>
+          <li><b>眷属</b> 自分の城でコウモリを切ると、永続の強化を1体、1夜に1体まで迎えられる。
+            夜を重ねるほど月潮の当たり外れを均せる。</li>
           <li><b>重さ</b> 血2つごとに移動力が1減る。欲張るほど帰り道は遠い。</li>
           <li><b>太陽</b> 4ラウンドごとに夜が明ける。日陰か城にいない者は焼かれ、抱えた血をすべて失う。</li>
           <li><b>ハンター</b> 黄色い三角。リング2を1ラウンドに1マスずつ周回する。触れれば即死。位置も進路も読める。</li>
           <li><b>洞窟</b> 通るとコウモリを1枚引ける。同じ洞窟は一夜に1回、1ターンに1枚まで。</li>
           <li><b>日陰</b> 定員1人。深部（リング2）の日陰はハンターの巡回路と重なっている。</li>
           <li><b>決着</b> 4夜が明けたら終わり。最終夜の持ち帰りは2点。</li>
+        </ul>
+        <h3>月潮 ―― リングごとの血脈の濃さ</h3>
+        <ul class="bat-list">
+          ${[1, 2, 3, 4]
+            .map(
+              (ring) =>
+                `<li><b>リング${ring}</b> ${Math.round(tideChance(ring) * 100)}%${
+                  ring === 2 ? ' — 最も濃い。ただしハンターの巡回路' : ''
+                }${ring === 4 ? ' — 城の隣。安全だが薄い' : ''}</li>`,
+            )
+            .join('')}
+        </ul>
+        <h3>眷属</h3>
+        <ul class="bat-list">
+          ${THRALL_ORDER.map((kind) => {
+            const spec = THRALL_SPECS[kind];
+            return `<li><b>${spec.icon} ${spec.name}</b> 蝠${spec.cost} — ${spec.text}</li>`;
+          }).join('')}
         </ul>
         <h3>コウモリ</h3>
         <ul class="bat-list">

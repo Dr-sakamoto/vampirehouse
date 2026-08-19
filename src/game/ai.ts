@@ -1,8 +1,11 @@
 import { VILLAGE, cellId, wrapSector } from './board';
 import {
+  allowanceFor,
   batPlayError,
   currentPlayer,
   endTurn,
+  hasThrall,
+  hireThrall,
   hunterCells,
   hunterNextCell,
   isFinalNight,
@@ -13,13 +16,40 @@ import {
   playBat,
   roundsUntilDawn,
   stealTargets,
+  thrallError,
+  tideChance,
   flightTargets,
   castleOf,
 } from './rules';
-import type { BatKind, GameState, Player } from './types';
+import { THRALL_SPECS } from './thralls';
+import type { BatKind, GameState, Player, ThrallKind } from './types';
 
-/** 欲張りの上限。これ以上は抱え込まない */
-const GREED_CAP = 3;
+/**
+ * 欲張りの上限。《器》は重さの刻みを緩めるので、抱えたまま帰れる量そのものが増える。
+ * 実際に引き際を決めるのは下の「帰り道が残っているか」の判定で、これはその外枠。
+ */
+function greedCap(me: Player): number {
+  return hasThrall(me, 'vessel') ? 6 : 3;
+}
+
+/**
+ * 雇う順番。ボット同士の総当たりで測った効き目の強い順
+ * （牙 +8.9pt / 群れ +4.6pt / 翼 +4.4pt / 器 +0.2pt、2人戦の勝率差）。
+ * 月潮に効く2体が先に来るのは、効き目を出す機会が1ラウンドに1回あるから。
+ */
+const HIRE_ORDER: ThrallKind[] = ['fang', 'swarm', 'wing', 'vessel'];
+
+/** そのマスで月潮を待ったときに得られる血の期待値 */
+function tideValue(state: GameState, me: Player, cell: string): number {
+  const c = state.board.cells[cell];
+  // 城と村は血脈の外（村はターン終了時に確実に1つ吸える別枠）
+  if (c.ring === 0 || c.ring === state.board.castleRing) return 0;
+  const payout = hasThrall(me, 'fang') ? 2 : 1;
+  let chance = tideChance(c.ring);
+  // 《群れ》は隣のリングの出目まで拾う
+  if (hasThrall(me, 'swarm')) chance += tideChance(c.ring - 1) + tideChance(c.ring + 1);
+  return chance * payout;
+}
 
 function findBat(player: Player, kind: BatKind): string | null {
   return player.bats.find((b) => b.kind === kind)?.uid ?? null;
@@ -156,16 +186,78 @@ function findLureKill(state: GameState): { hunter: string; dir: 1 | -1 } | null 
   return null;
 }
 
-/** 経路に沿って、進めるところまで進む */
-function walk(state: GameState, path: string[]): void {
+/** 経路に沿って、limit 歩ぶんだけ進む */
+function walk(state: GameState, path: string[], limit = Number.POSITIVE_INFINITY): void {
+  let taken = 0;
   for (const step of path.slice(1)) {
+    if (taken >= limit) break;
     const me = currentPlayer(state);
     if (me.movesLeft <= 0) break;
     if (!legalMoves(state).includes(step)) break;
     const before = me.at;
     moveTo(state, step);
+    taken += 1;
     // ハンターに討たれて城へ戻された
     if (currentPlayer(state).at !== step && currentPlayer(state).at !== before) break;
+  }
+}
+
+/**
+ * 経路のどこで足を止めるか。
+ *
+ * 目的地に着くまでの「ターン数」が変わらないなら、あと1歩ぶん手前で止まっても
+ * 損はしない ―― その1歩の差が、月潮の当たりやすいリングかどうかを決める。
+ * 予定を1ターンも遅らせない範囲でだけ、出目の期待値を拾いにいく。
+ */
+function tideAwareStop(state: GameState, path: string[]): number {
+  const me = currentPlayer(state);
+  const reach = Math.min(me.movesLeft, path.length - 1);
+  if (reach <= 0) return 0;
+
+  const danger = dangerCells(state);
+  const allowanceNext = moveAllowance(state, me);
+  const turnsLeftFrom = (k: number) =>
+    Math.ceil(Math.max(0, path.length - 1 - k) / Math.max(1, allowanceNext));
+
+  let best = reach;
+  let bestValue = tideValue(state, me, path[reach]);
+  const bestTurns = turnsLeftFrom(reach);
+
+  for (let k = reach - 1; k >= 1; k--) {
+    // 予定が1ターンでも遅れるなら、そこから先の手前止まりは検討しない
+    if (turnsLeftFrom(k) > bestTurns) break;
+    if (danger.has(path[k])) continue;
+    const value = tideValue(state, me, path[k]);
+    if (value > bestValue) {
+      best = k;
+      bestValue = value;
+    }
+  }
+  return best;
+}
+
+/**
+ * 眷属に切るコウモリの順番。夜明けから自分を救う札（影紡ぎ・飛翔・疾走）は最後まで残し、
+ * 相手を狙うだけの札から先に手放す。
+ */
+const SPEND_ORDER: BatKind[] = ['lure', 'steal', 'dash', 'flight', 'shroud'];
+
+function cardsToSpend(me: Player, count: number): string[] {
+  return [...me.bats]
+    .sort((a, b) => SPEND_ORDER.indexOf(a.kind) - SPEND_ORDER.indexOf(b.kind))
+    .slice(0, count)
+    .map((c) => c.uid);
+}
+
+/** 自分の城に立っているうちに、集めたコウモリを永続の力に変えておく */
+function hireIfWorthIt(state: GameState): void {
+  // 最終夜に雇っても、効き目を出す夜がもう残っていない
+  if (isFinalNight(state)) return;
+  for (const kind of HIRE_ORDER) {
+    const me = currentPlayer(state);
+    if (thrallError(state, me, kind) !== null) continue;
+    hireThrall(state, kind, cardsToSpend(me, THRALL_SPECS[kind].cost));
+    return;
   }
 }
 
@@ -227,9 +319,14 @@ export function botTakeTurn(state: GameState): void {
       playBat(state, dashUid);
       path = routeTo(state, currentPlayer(state), target);
     }
-    if (path) walk(state, path);
+    if (path) {
+      // 夜明け前の最後のラウンドだけは、月潮より先に屋根の下へ入る
+      const limit = lastRoundOfNight ? Number.POSITIVE_INFINITY : tideAwareStop(state, path);
+      walk(state, path, limit);
+    }
   }
   stepOffPatrolPath(state);
+  hireIfWorthIt(state);
 
   // --- 朝が来る前の保険（最終夜は隠れても加点されないので使わない） ---
   if (lastRoundOfNight && !isFinalNight(state)) {
@@ -275,7 +372,7 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
   // 村に立っている: もう1つ吸うか、引き上げるか
   if (me.at === VILLAGE) {
     const futureCarry = me.carrying + (state.bloodPool > 0 ? 1 : 0);
-    const futureAllowance = Math.max(1, state.config.baseMove - Math.floor(futureCarry / 2));
+    const futureAllowance = allowanceFor(state, me, futureCarry);
     const budgetAfterStaying = turnsAfterThis * futureAllowance;
     const homeCost = pathCost(routeTo(state, me, home));
     const refuge = nearestRefuge(state, me);
@@ -284,7 +381,7 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
       ? homeCost <= budgetAfterStaying
       : homeCost <= budgetAfterStaying ||
         (refuge !== null && refuge.cost <= budgetAfterStaying);
-    if (state.bloodPool > 0 && futureCarry <= GREED_CAP && canEscapeLater) return null;
+    if (state.bloodPool > 0 && futureCarry <= greedCap(me) && canEscapeLater) return null;
     return home;
   }
 
@@ -299,6 +396,10 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
   }
 
   // 手ぶら: 村を目指す。ただし朝までに逃げ込める見込みがある時だけ
+  //
+  // 月潮の当たりリングに居座って待つ手も試したが、測ってみると常に村への往復に負けた。
+  // 村は「立っていれば毎ターン確実に1つ」、血脈は最良でも1ラウンドあたり1つ弱。
+  // 月潮は狙って待つものではなく、行き帰りの途中で拾うもの ―― それが tideAwareStop。
   const villageCost = pathCost(routeTo(state, me, VILLAGE));
   if (villageCost === Number.POSITIVE_INFINITY) return home;
   if (state.bloodPool <= 0) {
@@ -315,7 +416,7 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
   // 「欲張るほど帰りが遠い」を、出発の時点で計算しておく。
   const turnsToVillage = turnsToCover(villageCost, me.movesLeft, allowance);
   const turnsAfterVillage = roundsUntilDawn(state) - turnsToVillage;
-  const carryAllowance = Math.max(1, state.config.baseMove - Math.floor(1 / 2));
+  const carryAllowance = allowanceFor(state, me, 1);
   const escape = nearestRefuge(state, me, VILLAGE);
   const canEscapeFromVillage =
     turnsAfterVillage >= 0 &&

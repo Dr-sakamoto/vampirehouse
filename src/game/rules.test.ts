@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { RING_COUNT, VILLAGE, cellId, shortestPath } from './board';
 import {
+  catchesTide,
   createGame,
   currentPlayer,
   defaultConfig,
@@ -12,7 +13,11 @@ import {
   moveAllowance,
   moveTo,
   playBat,
+  hireThrall,
   roundsUntilDawn,
+  thrallError,
+  tideOdds,
+  tideRingFor,
   winnerIndices,
 } from './rules';
 import type { BatKind, GameState } from './types';
@@ -48,8 +53,8 @@ describe('初期状態', () => {
   });
 
   it('村の血はプレイヤー数に比例する', () => {
-    expect(newGame(2).bloodPool).toBe(10);
-    expect(newGame(4).bloodPool).toBe(20);
+    expect(newGame(2).bloodPool).toBe(18);
+    expect(newGame(4).bloodPool).toBe(36);
   });
 
   it('ハンターは人数によらず2体、リング2を同じ向きに周回する', () => {
@@ -242,6 +247,8 @@ describe('太陽（夜明け）', () => {
     const shade = state.board.shadeCells[0];
     teleport(state, 0, shade);
     state.players[0].carrying = 2;
+    // 月潮で血が増えないよう血脈を涸らしておく。ここで見たいのは夜明けの生死だけ
+    state.bloodPool = 0;
     passRound(state);
     expect(state.players[0].carrying).toBe(2);
     expect(state.players[0].at).toBe(shade);
@@ -381,6 +388,7 @@ describe('コウモリの効果', () => {
     expect(isSafeCell(state, state.players[0], spot)).toBe(true);
 
     state.players[0].carrying = 2;
+    state.bloodPool = 0; // 月潮を挟まず、影紡ぎの効果だけを見る
     for (let i = 0; i < 4; i++) passRound(state);
     // 夜明けを生き延び、効果は消えている
     expect(state.players[0].at).toBe(spot);
@@ -519,5 +527,162 @@ describe('血の総量は保存される', () => {
       expect(total()).toBe(initial);
     }
     expect(total()).toBe(initial);
+  });
+});
+
+describe('月潮（毎ラウンドのダイス）', () => {
+  it('出目は中央ほど深いリングを指す（2d4、|出目−5|+1）', () => {
+    const table: Array<[number, number]> = [
+      [2, 4],
+      [3, 3],
+      [4, 2],
+      [5, 1],
+      [6, 2],
+      [7, 3],
+      [8, 4],
+    ];
+    for (const [sum, ring] of table) expect(tideRingFor(sum)).toBe(ring);
+  });
+
+  it('確率は深いリングほど高く、合計は1になる', () => {
+    const odds = tideOdds();
+    expect([...odds.values()].reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+    // リング2（ハンターの巡回路）が最も濃い ―― いちばん儲かる場所が死の道
+    expect(odds.get(2)!).toBeGreaterThan(odds.get(1)!);
+    expect(odds.get(1)!).toBeGreaterThan(odds.get(4)!);
+    expect(odds.get(3)!).toBeGreaterThan(odds.get(4)!);
+  });
+
+  it('ラウンド終了時に振られ、指されたリングに立つ者だけが血を得る', () => {
+    const state = newGame(2);
+    teleport(state, 0, cellId(1, 0));
+    teleport(state, 1, cellId(4, 4));
+    passRound(state);
+
+    const tide = state.tide!;
+    expect(tide.sum).toBeGreaterThanOrEqual(2);
+    expect(tide.sum).toBeLessThanOrEqual(8);
+    expect(tide.ring).toBe(tideRingFor(tide.sum));
+    for (const p of state.players) {
+      const onRing = state.board.cells[p.at].ring === tide.ring;
+      expect(p.carrying).toBe(onRing ? 1 : 0);
+    }
+  });
+
+  it('城と村は血脈の外（村はもともと血の出どころ、城は避難所）', () => {
+    const state = newGame(2);
+    teleport(state, 0, VILLAGE);
+    // 席1は自分の城に立ったまま
+    const before = state.bloodPool;
+    passRound(state);
+    // 村の1つは「村で吸った」ぶん。月潮からの取り分はどちらにも無い
+    expect(state.players[0].carrying).toBe(1);
+    expect(state.players[1].carrying).toBe(0);
+    expect(before - state.bloodPool).toBe(1);
+  });
+
+  it('村の血が尽きていれば月潮も空振りする', () => {
+    const state = newGame(2);
+    teleport(state, 0, cellId(1, 0));
+    teleport(state, 1, cellId(3, 0));
+    state.bloodPool = 0;
+    passRound(state);
+    expect(state.players.every((p) => p.carrying === 0)).toBe(true);
+    expect(state.bloodPool).toBe(0);
+  });
+
+  it('死因はダイスに触れない ―― 太陽もハンターも出目と無関係', () => {
+    // 同じ盤面・同じ手を、違うシード（＝違う出目）で16ラウンド回す
+    const deathsFor = (seed: number) => {
+      const config = defaultConfig(2, [false, false]);
+      config.seed = seed;
+      const s = createGame(config);
+      for (let i = 0; i < 16; i++) {
+        if (s.phase !== 'playing') break;
+        passRound(s);
+      }
+      return s.players.map((p) => p.deaths);
+    };
+    expect(deathsFor(7)).toEqual(deathsFor(99));
+  });
+});
+
+describe('眷属（永続強化）', () => {
+  function giveCards(state: GameState, index: number, count: number): string[] {
+    const uids: string[] = [];
+    for (let i = 0; i < count; i++) uids.push(giveBat(state, index, 'dash'));
+    return uids;
+  }
+
+  it('自分の城でしか雇えない', () => {
+    const state = newGame(2);
+    giveCards(state, 0, 2);
+    teleport(state, 0, VILLAGE);
+    expect(thrallError(state, state.players[0], 'wing')).toBe('自分の城でしか雇えない');
+    teleport(state, 0, state.board.castleCells[0]);
+    expect(thrallError(state, state.players[0], 'wing')).toBeNull();
+  });
+
+  it('コウモリを支払って雇い、払った札は捨札に行く', () => {
+    const state = newGame(2);
+    const uids = giveCards(state, 0, 2);
+    expect(hireThrall(state, 'wing', [uids[0]])).toBe(true);
+    expect(state.players[0].thralls).toEqual(['wing']);
+    expect(state.players[0].bats).toHaveLength(1);
+    expect(state.discard.some((c) => c.uid === uids[0])).toBe(true);
+  });
+
+  it('コウモリが足りなければ雇えない', () => {
+    const state = newGame(2);
+    expect(state.players[0].bats).toHaveLength(0);
+    expect(thrallError(state, state.players[0], 'wing')).toContain('コウモリ');
+    expect(hireThrall(state, 'wing')).toBe(false);
+  });
+
+  it('雇えるのは1夜に1体まで。夜が明ければまた雇える', () => {
+    const state = newGame(2);
+    giveCards(state, 0, 4);
+    expect(hireThrall(state, 'wing')).toBe(true);
+    expect(thrallError(state, state.players[0], 'fang')).toBe('眷属を迎えられるのは1夜に1体まで');
+    for (let i = 0; i < state.config.roundsPerNight; i++) passRound(state);
+    expect(state.night).toBe(2);
+    expect(thrallError(state, state.players[0], 'fang')).toBeNull();
+  });
+
+  it('同じ眷属は1体まで', () => {
+    const state = newGame(2);
+    giveCards(state, 0, 4);
+    hireThrall(state, 'wing');
+    state.players[0].hiredThisNight = false;
+    expect(thrallError(state, state.players[0], 'wing')).toBe('すでに雇っている');
+  });
+
+  it('翼は基礎移動力を1つ押し上げる', () => {
+    const state = newGame(2);
+    const p = state.players[0];
+    expect(moveAllowance(state, p)).toBe(3);
+    p.thralls.push('wing');
+    expect(moveAllowance(state, p)).toBe(4);
+  });
+
+  it('器は重さによる減速を −1 で止める', () => {
+    const state = newGame(2);
+    const p = state.players[0];
+    p.carrying = 6;
+    expect(moveAllowance(state, p)).toBe(1);
+    p.thralls.push('vessel');
+    expect(moveAllowance(state, p)).toBe(2);
+  });
+
+  it('群れは隣のリングの出目まで拾う', () => {
+    const state = newGame(2);
+    const bare = state.players[0];
+    const swarmed = state.players[1];
+    swarmed.thralls.push('swarm');
+    // 出目がリング2を指したとき、リング3に立つ者が受け取れるか
+    expect(catchesTide(bare, 3, 2)).toBe(false);
+    expect(catchesTide(swarmed, 3, 2)).toBe(true);
+    expect(catchesTide(swarmed, 4, 2)).toBe(false);
+    expect(catchesTide(bare, 2, 2)).toBe(true);
   });
 });

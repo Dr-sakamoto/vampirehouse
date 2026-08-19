@@ -1,14 +1,18 @@
 import {
+  catchesTide,
   currentPlayer,
   hunterNextCell,
   isSafeCell,
   legalMoves,
   roundsUntilDawn,
+  tideChance,
 } from '../game/rules';
 import type { GameState } from '../game/types';
 import {
   CASTLE_RING,
   CENTER,
+  RING_RADII,
+  SECTOR_ANGLE,
   VIEW_SIZE,
   cellCenter,
   cellHitRadius,
@@ -43,6 +47,7 @@ export class BoardView {
   private readonly boardLayer = el('g', { class: 'layer-board' });
   private readonly stateLayer = el('g', { class: 'layer-state' });
   private readonly ghostLayer = el('g', { class: 'layer-ghosts' });
+  private readonly veinLayer = el('g', { class: 'layer-veins' });
   private readonly markerLayer = el('g', { class: 'layer-markers' });
   private readonly pieceLayer = el('g', { class: 'layer-pieces' });
   private readonly stateNodes = new Map<string, SVGCircleElement>();
@@ -55,7 +60,14 @@ export class BoardView {
       role: 'img',
       'aria-label': 'ヴァンパイア・ハウスの盤面',
     });
-    this.svg.append(this.boardLayer, this.stateLayer, this.ghostLayer, this.markerLayer, this.pieceLayer);
+    this.svg.append(
+      this.boardLayer,
+      this.stateLayer,
+      this.veinLayer,
+      this.ghostLayer,
+      this.markerLayer,
+      this.pieceLayer,
+    );
   }
 
   /**
@@ -113,10 +125,35 @@ export class BoardView {
     }
   }
 
+  /**
+   * 各リングに「月潮がここを指す確率」を刻む。
+   * 出目は振られるまで分からないが、どのリングが濃いかは常に見えている
+   * ―― 賭けるかどうかを選べるように。
+   */
+  private buildVeinLabels(state: GameState): void {
+    // 4つとも同じ放射線の上に並べると、外へ向かって薄くなる目盛りとして読める。
+    // セクター境界（マスの角）なのでコマにも洞窟・日陰の絵文字にも重ならない
+    const angle = sectorAngle(0) - SECTOR_ANGLE / 2;
+    for (let ring = 1; ring <= state.board.ringCount; ring++) {
+      const radius = (RING_RADII[ring - 1] + RING_RADII[ring]) / 2;
+      const p = { x: CENTER.x + radius * Math.cos(angle), y: CENTER.y + radius * Math.sin(angle) };
+      const label = el('text', {
+        x: p.x,
+        y: p.y,
+        class: 'vein-label',
+        'text-anchor': 'middle',
+        'dominant-baseline': 'central',
+      });
+      label.textContent = `${Math.round(tideChance(ring) * 100)}%`;
+      this.veinLayer.append(label);
+    }
+  }
+
   private build(state: GameState): void {
     const { board } = state;
 
     this.buildBoardShape(state);
+    this.buildVeinLabels(state);
 
     for (const id of board.order) {
       const cell = board.cells[id];
@@ -142,8 +179,16 @@ export class BoardView {
     const hunterSoon = new Set(state.hunters.map(hunterNextCell));
     const dawnNext = roundsUntilDawn(state) === 1 && state.phase === 'playing';
 
+    const tideRing = state.tide?.ring ?? 0;
     for (const [id, node] of this.stateNodes) {
       const cell = state.board.cells[id];
+      node.classList.toggle(
+        'is-vein',
+        cell.ring >= 1 &&
+          cell.ring <= state.board.ringCount &&
+          tideRing > 0 &&
+          catchesTide(me, cell.ring, tideRing),
+      );
       node.classList.toggle('is-legal', legal.has(id));
       node.classList.toggle('is-target', targets.has(id));
       node.classList.toggle('is-danger', hunterSoon.has(id));

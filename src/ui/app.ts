@@ -1,6 +1,7 @@
 import { botTakeTurn } from '../game/ai';
 import { BAT_SPECS } from '../game/bats';
 import { cellId } from '../game/board';
+import { THRALL_ORDER, THRALL_SPECS } from '../game/thralls';
 import {
   batPlayError,
   createGame,
@@ -14,18 +15,23 @@ import {
   legalMoves,
   moveTo,
   playBat,
+  hireThrall,
   roundsUntilDawn,
   stealTargets,
+  thrallError,
+  tideChance,
   winnerIndices,
 } from '../game/rules';
-import type { BatCard, GameConfig, GameState } from '../game/types';
+import type { BatCard, GameConfig, GameState, ThrallKind } from '../game/types';
 import { BoardView } from './board-view';
 
 type Targeting =
   | { kind: 'none' }
   | { kind: 'flight'; card: BatCard }
   | { kind: 'steal'; card: BatCard }
-  | { kind: 'lure'; card: BatCard };
+  | { kind: 'lure'; card: BatCard }
+  /** 眷属を選んだあと、対価に切るコウモリを手札から指名している最中 */
+  | { kind: 'thrall'; thrall: ThrallKind };
 
 const BOT_STEP_MS = 420;
 
@@ -120,13 +126,24 @@ export class App {
 
   private handleBatClick(card: BatCard): void {
     if (!this.humanTurn) return;
+
+    // 眷属の対価を選んでいる最中は、クリックした札がそのまま支払いになる
+    if (this.targeting.kind === 'thrall') {
+      hireThrall(this.state, this.targeting.thrall, [card.uid]);
+      this.targeting = { kind: 'none' };
+      this.render();
+      return;
+    }
+
     if (batPlayError(this.state, card.kind) !== null) return;
 
     if (card.kind === 'flight' || card.kind === 'steal' || card.kind === 'lure') {
-      this.targeting =
-        this.targeting.kind !== 'none' && this.targeting.card.uid === card.uid
-          ? { kind: 'none' }
-          : ({ kind: card.kind, card } as Targeting);
+      const already =
+        (this.targeting.kind === 'flight' ||
+          this.targeting.kind === 'steal' ||
+          this.targeting.kind === 'lure') &&
+        this.targeting.card.uid === card.uid;
+      this.targeting = already ? { kind: 'none' } : ({ kind: card.kind, card } as Targeting);
       this.render();
       return;
     }
@@ -202,6 +219,7 @@ export class App {
           `<i class="${i < untilDawn ? 'on' : 'off'}"></i>`).join('')}</span>
         <strong>${untilDawn} ラウンド</strong>
       </div>
+      ${this.tideBlock()}
       ${finale ? '<div class="finale">最終夜 ―― 持ち帰った血は 2 点</div>' : ''}
       ${
         untilDawn === 1
@@ -210,6 +228,42 @@ export class App {
             : '<div class="warning">このラウンドの終わりに陽が昇る。日陰か城にいない者は灰になる。</div>'
           : ''
       }
+    `;
+  }
+
+  /**
+   * 月潮は「振られるまで分からないが、確率は常に見えている」ダイス。
+   * だから直近の出目と、リングごとの濃さを並べて出す。
+   * 自分が今どのリングに立っているかも印を付ける ―― それが今夜の賭け。
+   */
+  private tideBlock(): string {
+    const s = this.state;
+    const me = currentPlayer(s);
+    const myRing = s.board.cells[me.at].ring;
+    const rings = [1, 2, 3, 4];
+    const last = s.tide;
+
+    const cells = rings
+      .map((ring) => {
+        const mine = ring === myRing ? ' is-mine' : '';
+        const hit = last && last.ring === ring ? ' is-hit' : '';
+        return `<span class="vein${mine}${hit}">
+            <b>R${ring}</b>
+            <i>${Math.round(tideChance(ring) * 100)}%</i>
+          </span>`;
+      })
+      .join('');
+
+    const roll = last
+      ? `<span class="tide-dice">${last.dice[0]}+${last.dice[1]}=${last.sum}</span> → リング${last.ring}`
+      : '<span class="tide-dice">—</span> まだ振られていない';
+
+    return `
+      <div class="tide">
+        <div class="tide-head"><span class="tide-label">🌙 月潮</span>${roll}</div>
+        <div class="tide-veins">${cells}</div>
+        <p class="tide-note">ラウンドの終わりに 2d4。指されたリングに立つ者だけが血を吸える。</p>
+      </div>
     `;
   }
 
@@ -236,6 +290,16 @@ export class App {
           <span title="このターンの残り移動力">歩 ${isCurrent ? p.movesLeft : '–'}</span>
           <span class="${safe ? 'safe' : 'exposed'}">${safe ? '安全' : '陽の下'}</span>
         </div>
+        ${
+          p.thralls.length > 0
+            ? `<div class="player-thralls">${p.thralls
+                .map((k) => {
+                  const spec = THRALL_SPECS[k];
+                  return `<span class="thrall-chip" title="${spec.name} — ${spec.text}">${spec.icon} ${spec.name}</span>`;
+                })
+                .join('')}</div>`
+            : ''
+        }
       `;
       node.append(card);
     }
@@ -256,19 +320,31 @@ export class App {
       return;
     }
 
-    hint.textContent = `このターンあと ${Math.max(0, s.config.batsPerTurn - me.batsPlayedThisTurn)} 枚`;
+    hint.textContent =
+      this.targeting.kind === 'thrall'
+        ? `《${THRALL_SPECS[this.targeting.thrall].name}》の対価に切る札を選ぶ`
+        : `このターンあと ${Math.max(0, s.config.batsPerTurn - me.batsPlayedThisTurn)} 枚`;
 
     if (me.bats.length === 0) {
       hand.innerHTML = '<p class="empty">まだ1枚も持っていない。洞窟へ寄り道すれば手に入る。</p>';
       return;
     }
 
+    // 眷属の対価を選んでいる最中は、使えない札も「切る」ことはできる
+    const paying = this.targeting.kind === 'thrall';
+
     for (const card of me.bats) {
       const spec = BAT_SPECS[card.kind];
-      const error = batPlayError(s, card.kind);
+      const error = paying ? null : batPlayError(s, card.kind);
       const button = document.createElement('button');
-      const selected = this.targeting.kind !== 'none' && this.targeting.card.uid === card.uid;
-      button.className = `bat${error ? ' is-disabled' : ''}${selected ? ' is-selected' : ''}`;
+      const selected =
+        (this.targeting.kind === 'flight' ||
+          this.targeting.kind === 'steal' ||
+          this.targeting.kind === 'lure') &&
+        this.targeting.card.uid === card.uid;
+      button.className = `bat${error ? ' is-disabled' : ''}${selected ? ' is-selected' : ''}${
+        paying ? ' is-paying' : ''
+      }`;
       button.disabled = error !== null;
       button.title = error ?? spec.text;
       button.innerHTML = `
@@ -313,7 +389,11 @@ export class App {
       return;
     }
 
-    if (this.targeting.kind !== 'none') {
+    if (
+      this.targeting.kind === 'flight' ||
+      this.targeting.kind === 'steal' ||
+      this.targeting.kind === 'lure'
+    ) {
       node.append(this.targetingPanel());
       return;
     }
@@ -344,6 +424,9 @@ export class App {
       node.append(carry);
     }
 
+    const thralls = this.thrallPanel();
+    if (thralls) node.append(thralls);
+
     const end = document.createElement('button');
     end.className = 'primary';
     end.textContent = atVillage ? '血を吸ってターン終了' : 'ターン終了';
@@ -351,11 +434,60 @@ export class App {
     node.append(end);
   }
 
+  /**
+   * 自分の城に立っているあいだだけ開く、眷属の広間。
+   * 対価はコウモリ ―― 血（＝得点）では買えない。
+   */
+  private thrallPanel(): HTMLElement | null {
+    const s = this.state;
+    const me = currentPlayer(s);
+    if (s.board.cells[me.at].kind !== 'castle' || s.board.cells[me.at].castleOf !== me.index) {
+      return null;
+    }
+
+    const panel = document.createElement('div');
+    panel.className = 'thralls';
+    const paying = this.targeting.kind === 'thrall';
+    panel.innerHTML = `<h3>眷属を迎える <span class="hint">${
+      paying ? '対価にするコウモリを手札から選ぶ' : '1夜に1体まで・対価はコウモリ'
+    }</span></h3>`;
+
+    const row = document.createElement('div');
+    row.className = 'thrall-row';
+    for (const kind of THRALL_ORDER) {
+      const spec = THRALL_SPECS[kind];
+      const error = thrallError(s, me, kind);
+      const button = document.createElement('button');
+      const selected = this.targeting.kind === 'thrall' && this.targeting.thrall === kind;
+      button.className = `thrall${error ? ' is-disabled' : ''}${selected ? ' is-selected' : ''}`;
+      button.disabled = error !== null;
+      button.title = error ?? spec.text;
+      button.innerHTML = `
+        <span class="thrall-icon">${spec.icon}</span>
+        <span class="thrall-name">${spec.name}<small>蝠 ${spec.cost}</small></span>
+        <span class="thrall-text">${spec.text}</span>
+        ${error ? `<span class="thrall-error">${error}</span>` : ''}
+      `;
+      button.addEventListener('click', () => {
+        this.targeting = selected ? { kind: 'none' } : { kind: 'thrall', thrall: kind };
+        this.render();
+      });
+      row.append(button);
+    }
+    panel.append(row);
+    return panel;
+  }
+
   private targetingPanel(): HTMLElement {
     const s = this.state;
     const panel = document.createElement('div');
     panel.className = 'targeting';
-    const card = this.targeting.kind !== 'none' ? this.targeting.card : null;
+    const card =
+      this.targeting.kind === 'flight' ||
+      this.targeting.kind === 'steal' ||
+      this.targeting.kind === 'lure'
+        ? this.targeting.card
+        : null;
     const spec = card ? BAT_SPECS[card.kind] : null;
 
     const title = document.createElement('p');

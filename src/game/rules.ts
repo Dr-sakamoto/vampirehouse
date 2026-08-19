@@ -8,7 +8,8 @@ import {
   wrapSector,
 } from './board';
 import { BAT_SPECS, buildDeck } from './bats';
-import { shuffle } from './rng';
+import { nextRandom, shuffle } from './rng';
+import { THRALL_SPECS } from './thralls';
 import type {
   BatKind,
   Board,
@@ -17,6 +18,8 @@ import type {
   Hunter,
   LogEntry,
   Player,
+  ThrallKind,
+  Tide,
 } from './types';
 
 export const PLAYER_COLORS = ['#e63946', '#4361ee', '#2a9d3f', '#f4a300'];
@@ -34,7 +37,7 @@ export function defaultConfig(playerCount = 2, bots?: boolean[]): GameConfig {
     baseMove: 3,
     roundsPerNight: 4,
     totalNights: 4,
-    bloodPool: 5 * playerCount,
+    bloodPool: 9 * playerCount,
     batsPerTurn: 2,
     seed: 1,
   };
@@ -71,6 +74,8 @@ export function createGame(config: GameConfig): GameState {
     lootedCaveThisTurn: false,
     deaths: 0,
     delivered: 0,
+    thralls: [],
+    hiredThisNight: false,
   }));
 
   const state: GameState = {
@@ -88,6 +93,7 @@ export function createGame(config: GameConfig): GameState {
     phase: 'playing',
     log: [],
     lastBurned: [],
+    tide: null,
     rngState: shuffled.state,
   };
 
@@ -109,9 +115,26 @@ export function currentPlayer(state: GameState): Player {
   return state.players[state.current];
 }
 
+export function hasThrall(player: Player, kind: ThrallKind): boolean {
+  return player.thralls.includes(kind);
+}
+
+/**
+ * その血量を抱えたときの移動力。《翼》が基礎を1つ押し上げ、《器》が重さの刻みを緩める。
+ * 「もう1つ吸ったら何歩になるか」を先読みするために、血の量を引数で取る。
+ */
+export function allowanceFor(state: GameState, player: Player, carrying: number): number {
+  const base = state.config.baseMove + (hasThrall(player, 'wing') ? 1 : 0);
+  const drag = Math.floor(carrying / 2);
+  // 《器》は重さそのものを消しはしないが、減速の底を −1 で止める。
+  // 「4つ抱えたら歩けない」という運搬量の天井が外れ、大荷物の夜が成立する
+  const felt = hasThrall(player, 'vessel') ? Math.min(drag, 1) : drag;
+  return Math.max(1, base - felt);
+}
+
 /** 血を多く抱えるほど鈍重になる。ターン開始時に確定し、ターン中は変化しない */
 export function moveAllowance(state: GameState, player: Player): number {
-  return Math.max(1, state.config.baseMove - Math.floor(player.carrying / 2));
+  return allowanceFor(state, player, player.carrying);
 }
 
 export function hunterAt(state: GameState, id: string): Hunter | undefined {
@@ -294,6 +317,7 @@ export function endTurn(state: GameState): void {
 
 function endRound(state: GameState): void {
   moveHunters(state);
+  rollTide(state);
 
   const dawnNow = state.round % state.config.roundsPerNight === 0;
   if (dawnNow) {
@@ -309,6 +333,137 @@ function endRound(state: GameState): void {
     pushLog(state, `夜明けまであと ${roundsUntilDawn(state)} ラウンド。`, 'warn');
   }
   beginTurn(state);
+}
+
+// ---------------------------------------------------------------- 月潮
+
+/**
+ * 月潮 ―― 毎ラウンド1回、全員に同時に降りかかるダイス。
+ *
+ * 出目は 4面ダイス2つ（2〜8）。中央の5に寄るほど盤面の深いリングを指す。
+ * 死因（太陽・ハンター）は一切ダイスに触れない。運が決めるのは「稼げたか」だけで、
+ * 「死んだか」は今までどおり計算違いのときだけ ―― カタンのダイスが
+ * 産出だけを決め、盗賊の位置は自分で決めるのと同じ切り分け。
+ *
+ * 振るのは全員の手番が終わったあと。だから立ち止まる場所を選ぶ時点では
+ * 出目が分からない ＝ どのリングで夜を過ごすかが賭けになる。
+ */
+export function tideRingFor(sum: number): number {
+  return Math.abs(sum - 5) + 1;
+}
+
+/** 2d4 の全16通りを数え上げた、リングごとの確率 */
+const TIDE_ODDS: ReadonlyMap<number, number> = (() => {
+  const odds = new Map<number, number>();
+  for (let a = 1; a <= 4; a++) {
+    for (let b = 1; b <= 4; b++) {
+      const ring = tideRingFor(a + b);
+      odds.set(ring, (odds.get(ring) ?? 0) + 1 / 16);
+    }
+  }
+  return odds;
+})();
+
+/** 出目ごとの確率（2d4）。UI の確率表と、ボットの期待値計算が同じ表を見る */
+export function tideOdds(): ReadonlyMap<number, number> {
+  return TIDE_ODDS;
+}
+
+/** そのリングに立って月潮を待ったときに得られる血の期待値 */
+export function tideChance(ring: number): number {
+  return TIDE_ODDS.get(ring) ?? 0;
+}
+
+function rollDie(state: GameState): number {
+  const r = nextRandom(state.rngState);
+  state.rngState = r.state;
+  return Math.floor(r.value * 4) + 1;
+}
+
+/**
+ * そのマスが月潮を受け取れるか。
+ * 《群れ》は隣のリングまで血脈を探れるので、当たり幅が1リングから3リングへ広がる
+ * ―― 出目に一点賭けするしかなかったのが、分散して受けられるようになる。
+ */
+export function catchesTide(player: Player, ring: number, tideRing: number): boolean {
+  const gap = Math.abs(ring - tideRing);
+  return gap === 0 || (gap === 1 && hasThrall(player, 'swarm'));
+}
+
+function rollTide(state: GameState): void {
+  const dice: [number, number] = [rollDie(state), rollDie(state)];
+  const sum = dice[0] + dice[1];
+  const ring = tideRingFor(sum);
+  const tide: Tide = { dice, sum, ring, fed: [] };
+  state.tide = tide;
+
+  pushLog(state, `🌙 月潮 ${dice[0]}+${dice[1]}＝${sum} ―― リング${ring}に血脈が湧く。`, 'info');
+
+  for (const player of state.players) {
+    if (state.bloodPool <= 0) break;
+    const cell = state.board.cells[player.at];
+    // 城と村は血脈の外。城は避難所、村はもともと血の出どころ
+    if (cell.ring === 0 || cell.ring === state.board.castleRing) continue;
+    if (!catchesTide(player, cell.ring, ring)) continue;
+
+    // 《牙》が厚くするのは、出目がちょうど自分のリングを指したときだけ。
+    // 《群れ》で広げた外周ぶんまで倍にすると、2つ揃えた者が手を付けられなくなる
+    const want = hasThrall(player, 'fang') && cell.ring === ring ? 2 : 1;
+    const got = Math.min(want, state.bloodPool);
+    state.bloodPool -= got;
+    player.carrying += got;
+    tide.fed.push(player.index);
+    pushLog(
+      state,
+      `${player.name} が血脈から血を ${got} 吸い上げた（運搬中 ${player.carrying}）。`,
+      'good',
+    );
+  }
+}
+
+// ---------------------------------------------------------------- 眷属
+
+export function thrallError(state: GameState, player: Player, kind: ThrallKind): string | null {
+  if (state.phase !== 'playing') return 'いま雇えない';
+  const cell = state.board.cells[player.at];
+  if (cell.kind !== 'castle' || cell.castleOf !== player.index) return '自分の城でしか雇えない';
+  if (hasThrall(player, kind)) return 'すでに雇っている';
+  if (player.hiredThisNight) return '眷属を迎えられるのは1夜に1体まで';
+  const cost = THRALL_SPECS[kind].cost;
+  if (player.bats.length < cost) return `コウモリが ${cost} 枚必要（いま ${player.bats.length} 枚）`;
+  return null;
+}
+
+/**
+ * 自分の城で、手札のコウモリを捨てて眷属を雇う。
+ * 支払う uid を渡さなければ、手札の先頭から必要枚数を切る。
+ */
+export function hireThrall(state: GameState, kind: ThrallKind, pay: string[] = []): boolean {
+  const player = currentPlayer(state);
+  if (thrallError(state, player, kind) !== null) return false;
+
+  const spec = THRALL_SPECS[kind];
+  const chosen = pay.filter((uid) => player.bats.some((b) => b.uid === uid)).slice(0, spec.cost);
+  for (const card of player.bats) {
+    if (chosen.length >= spec.cost) break;
+    if (!chosen.includes(card.uid)) chosen.push(card.uid);
+  }
+
+  for (const uid of chosen) {
+    const idx = player.bats.findIndex((b) => b.uid === uid);
+    state.discard.push(player.bats[idx]);
+    player.bats.splice(idx, 1);
+  }
+
+  player.thralls.push(kind);
+  player.hiredThisNight = true;
+  // 移動力はターン開始時に確定する規則を眷属でも崩さない。翼が効くのは次のターンから
+  pushLog(
+    state,
+    `${player.name} がコウモリ ${spec.cost} 枚を放って《${spec.name}》を従えた。`,
+    'good',
+  );
+  return true;
 }
 
 function moveHunters(state: GameState): void {
@@ -338,6 +493,7 @@ function resolveDawn(state: GameState): void {
   }
 
   state.cavesLooted = [];
+  for (const p of state.players) p.hiredThisNight = false;
 
   if (state.night >= state.config.totalNights) {
     finishGame(state, '規定の夜数が終わった');
@@ -496,4 +652,5 @@ export function roundTripCost(): number {
 }
 
 export { CASTLE_SECTORS, VILLAGE, castleOf, cellId };
+export { THRALL_ORDER, THRALL_SPECS } from './thralls';
 export type { Board };

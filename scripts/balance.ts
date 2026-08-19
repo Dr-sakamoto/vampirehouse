@@ -16,6 +16,8 @@ for (const playerCount of [2, 3, 4]) {
   const deaths: number[] = [];
   const margins: number[] = [];
   const leftover: number[] = [];
+  const thralls: number[] = [];
+  const zeroes: number[] = [];
   for (let seed = 1; seed <= 60; seed++) {
     const s = run(playerCount, seed);
     scores.push(s.players.map((p) => p.score));
@@ -23,11 +25,14 @@ for (const playerCount of [2, 3, 4]) {
     const sorted = s.players.map((p) => p.score).sort((a, b) => b - a);
     margins.push(sorted[0] - sorted[1]);
     leftover.push(s.bloodPool);
+    thralls.push(s.players.reduce((a, p) => a + p.thralls.length, 0) / playerCount);
+    zeroes.push(s.players.filter((p) => p.score === 0).length);
   }
   const flat = scores.flat();
   const avg = (xs: number[]) => (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(2);
   console.log(
     `${playerCount}人:  平均得点 ${avg(flat)}  最高 ${Math.max(...flat)}  最低 ${Math.min(...flat)}` +
-      `  1ゲームの死亡数 ${avg(deaths)}  勝差 ${avg(margins)}  村の残り血 ${avg(leftover)}`,
+      `  1ゲームの死亡数 ${avg(deaths)}  勝差 ${avg(margins)}  村の残り血 ${avg(leftover)}` +
+      `  眷属 ${avg(thralls)}  無得点 ${avg(zeroes)}`,
   );
 }

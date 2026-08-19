@@ -34,6 +34,13 @@ export interface Board {
   caveCells: string[];
 }
 
+/** 眷属（永続強化）の種類 */
+export type ThrallKind =
+  | 'swarm' // 群れ: 月潮が隣のリングを指したときも血を得る
+  | 'fang' // 牙: 月潮の取り分が2つになる
+  | 'vessel' // 器: 血の重さが3個ごとになる
+  | 'wing'; // 翼: 基礎移動力 +1
+
 /** コウモリ（発展カード）の種類 */
 export type BatKind = 'dash' | 'lure' | 'steal' | 'shroud' | 'flight';
 
@@ -75,6 +82,22 @@ export interface Player {
   deaths: number;
   /** 通算で城に持ち帰った血の本数（得点とは別。最終夜ボーナスがあるため） */
   delivered: number;
+  /** 雇った眷属（永続強化）。同じ種類は1つまで */
+  thralls: ThrallKind[];
+  /** 今夜すでに眷属を雇ったか（1夜1体まで） */
+  hiredThisNight: boolean;
+}
+
+/** 月潮 ―― 全員に同時に降りかかる、1ラウンド1回のダイス */
+export interface Tide {
+  /** 4面ダイス2つの出目 */
+  dice: [number, number];
+  /** 合計（2〜8） */
+  sum: number;
+  /** 血脈が湧いたリング（1〜4） */
+  ring: number;
+  /** 実際に血を得たプレイヤーindex */
+  fed: number[];
 }
 
 export type Phase = 'playing' | 'dawn' | 'gameover';
@@ -125,5 +148,7 @@ export interface GameState {
   log: LogEntry[];
   /** 直近の夜明けで焼かれたプレイヤーindex（演出用） */
   lastBurned: number[];
+  /** 直近に振られた月潮。まだ1回も振っていなければ null */
+  tide: Tide | null;
   rngState: number;
 }
