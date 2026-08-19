@@ -9,7 +9,7 @@ function run(playerCount: number, seed: number, tweak?: (c: GameConfig) => void)
   tweak?.(config);
   const state = createGame(config);
   let guard = 0;
-  while (state.phase !== 'gameover' && guard++ < 5000) botTakeTurn(state);
+  while (state.phase !== 'gameover' && guard++ < 20000) botTakeTurn(state);
   return state;
 }
 
@@ -25,6 +25,8 @@ function measure(playerCount: number, tweak?: (c: GameConfig) => void) {
   const leftover: number[] = [];
   const stolen: number[] = [];
   const kills: number[] = [];
+  const rounds: number[] = [];
+  const hauls: number[] = [];
   let shutout = 0;
   let seats = 0;
 
@@ -41,6 +43,11 @@ function measure(playerCount: number, tweak?: (c: GameConfig) => void) {
     stolen.push(s.players.reduce((a, p) => a + p.stolen, 0));
     kills.push(s.players.reduce((a, p) => a + p.kills, 0));
     leftover.push(s.bloodPool);
+    rounds.push(s.round);
+    for (const e of s.log) {
+      const m = e.text.match(/血 (\d+) を持ち帰った/);
+      if (m) hauls.push(Number(m[1]));
+    }
   }
 
   return {
@@ -55,6 +62,9 @@ function measure(playerCount: number, tweak?: (c: GameConfig) => void) {
     stolen: avg(stolen),
     kills: avg(kills),
     leftover: avg(leftover),
+    rounds: avg(rounds),
+    haul: avg(hauls),
+    bigHaul: hauls.filter((h) => h >= 3).length / (hauls.length || 1),
   };
 }
 
@@ -64,6 +74,7 @@ for (const playerCount of [2, 3, 4]) {
     `${m.playerCount}人:  平均得点 ${f(m.avg)}  勝者 ${f(m.winner)}  最高 ${m.top}  最低 ${m.low}` +
       `  無得点率 ${f(m.shutout * 100, 0)}%  死亡 ${f(m.deaths)}` +
       `  奪った血 ${f(m.stolen)}  仕留め ${f(m.kills)}` +
-      `  勝差 ${f(m.margin)}  村の残り血 ${f(m.leftover)}`,
+      `  勝差 ${f(m.margin)}  村の残り血 ${f(m.leftover)}` +
+      `  全${f(m.rounds, 1)}R  1回の持ち帰り ${f(m.haul)}本  3本以上 ${f(m.bigHaul * 100, 0)}%`,
   );
 }

@@ -27,9 +27,8 @@ describe('ボット同士の対戦', () => {
     for (const playerCount of [2, 3, 4]) {
       const state = playOut(playerCount, 7);
       expect(state.phase).toBe('gameover');
-      expect(state.round).toBeLessThanOrEqual(
-        state.config.roundsPerNight * state.config.totalNights + 1,
-      );
+      // 夜の長さはダイス次第。無限に伸びないことだけ確かめる
+      expect(state.round).toBeLessThan(300);
     }
   });
 
@@ -105,7 +104,7 @@ describe('ボットの判断', () => {
   it('最終夜の最後のラウンドでは、避難所ではなく城を目指す', () => {
     const state = newBotGame(2);
     state.night = state.config.totalNights;
-    state.round = state.config.roundsPerNight * state.config.totalNights;
+    state.intoNight = state.config.safeRounds; // 確定の夜は尽きた ＝ 次に朝が来うる
     state.current = 0;
 
     const bot = state.players[0];

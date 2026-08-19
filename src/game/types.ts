@@ -59,7 +59,7 @@ export interface Player {
   color: string;
   /** 現在地のセルID */
   at: string;
-  /** 運搬中の血（持ち帰るまで得点にならない） */
+  /** 運搬中の血（持ち帰るまで得点にならない）。何本抱えても足は鈍らない */
   carrying: number;
   /** 城に持ち帰って確定した得点 */
   score: number;
@@ -98,10 +98,14 @@ export interface GameConfig {
   playerCount: number;
   /** 各プレイヤーが人間かボットか */
   bots: boolean[];
-  /** 基礎移動力 */
+  /** 毎ターンの移動力。血を抱えていても変わらない */
   baseMove: number;
-  /** 1夜あたりのラウンド数（このラウンド数が終わると夜明け） */
-  roundsPerNight: number;
+  /** 村でターンを終えたときに吸える血の目。この中から1つ出る */
+  suckFaces: number[];
+  /** 夜が必ず続くラウンド数。ここまでは朝が来ない */
+  safeRounds: number;
+  /** 安全ラウンドを過ぎたあと、1ラウンドごとに朝が来る確率（0〜1） */
+  dawnChance: number;
   /** ゲーム全体の夜数 */
   totalNights: number;
   /** 村の血の総量 */
@@ -127,6 +131,8 @@ export interface GameState {
   cavesLooted: string[];
   /** 1始まりの通算ラウンド数 */
   round: number;
+  /** 今夜が始まってから経過したラウンド数（夜明けで0に戻る） */
+  intoNight: number;
   /** 1始まりの夜数 */
   night: number;
   /** 現在の手番プレイヤー */

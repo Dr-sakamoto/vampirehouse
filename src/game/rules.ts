@@ -9,7 +9,7 @@ import {
   wrapSector,
 } from './board';
 import { BAT_SPECS, buildDeck } from './bats';
-import { shuffle } from './rng';
+import { nextRandom, shuffle } from './rng';
 import type {
   BatKind,
   Board,
@@ -39,9 +39,11 @@ export function defaultConfig(playerCount = 2, bots?: boolean[]): GameConfig {
     playerCount,
     bots: bots ?? Array.from({ length: playerCount }, (_, i) => i > 0),
     baseMove: 3,
-    roundsPerNight: 4,
+    suckFaces: [1, 2, 3],
+    safeRounds: 3,
+    dawnChance: 1 / 3,
     totalNights: 4,
-    bloodPool: 5 * playerCount,
+    bloodPool: 12 * playerCount,
     bloodValue: DEFAULT_BLOOD_VALUE,
     batsPerTurn: 2,
     seed: 1,
@@ -94,6 +96,7 @@ export function createGame(config: GameConfig): GameState {
     bloodPool: config.bloodPool,
     cavesLooted: [],
     round: 1,
+    intoNight: 0,
     night: 1,
     current: 0,
     startPlayer: 0,
@@ -103,7 +106,7 @@ export function createGame(config: GameConfig): GameState {
     rngState: shuffled.state,
   };
 
-  pushLog(state, `第1夜。夜明けまであと ${config.roundsPerNight} ラウンド。`, 'info');
+  pushLog(state, `第1夜。${config.safeRounds} ラウンドは朝が来ない。`, 'info');
   beginTurn(state);
   return state;
 }
@@ -121,9 +124,18 @@ export function currentPlayer(state: GameState): Player {
   return state.players[state.current];
 }
 
-/** 血を多く抱えるほど鈍重になる。ターン開始時に確定し、ターン中は変化しない */
-export function moveAllowance(state: GameState, player: Player): number {
-  return Math.max(1, state.config.baseMove - Math.floor(player.carrying / 2));
+/**
+ * 毎ターンの移動力。
+ *
+ * かつては「血2つごとに1歩遅くなる」重さの規則があったが、廃止した。
+ * 吸える血の量がダイスになった以上、重さを残すと**上振れが事故死になる**
+ * ―― 運良く3本引いた者が足を奪われて帰れず焼ける、という形で、
+ * ダイスが収入ではなく生死を決めてしまう。実測でも、重さを残したまま
+ * 吸血をダイスにすると死亡が 0.04 → 1.11 に跳ね上がった。
+ * 引き際の緊張は、重さではなく夜明け（§太陽）が受け持つ。
+ */
+export function moveAllowance(state: GameState, _player: Player): number {
+  return state.config.baseMove;
 }
 
 export function hunterAt(state: GameState, id: string): Hunter | undefined {
@@ -167,10 +179,18 @@ export function legalMoves(state: GameState): string[] {
   });
 }
 
-export function roundsUntilDawn(state: GameState): number {
-  const perNight = state.config.roundsPerNight;
-  const intoNight = (state.round - 1) % perNight;
-  return perNight - intoNight;
+/**
+ * 夜明けまで「あと何ラウンドあると見て動くか」。
+ *
+ * 安全ラウンドのぶんは確定だが、その先は毎ラウンドの賭けになるので、
+ * 確定分に見込みを少し足した数を計画の基準にする。ボット同士で振って 2 に決めた:
+ * 1 だと確定ラウンドの終わりで必ず引き上げてしまい取り分が減り（206点 → 185点）、
+ * 2 以上は頭打ちになる（他の制約が先に効くため 2・3・4 で差が出ない）。
+ */
+export const DAWN_PLAN_HORIZON = 2;
+
+export function plannedRoundsLeft(state: GameState): number {
+  return Math.max(1, safeRoundsLeft(state) + DAWN_PLAN_HORIZON);
 }
 
 export function isFinalNight(state: GameState): boolean {
@@ -193,6 +213,49 @@ export function deliveryScore(state: GameState, count: number): number {
   if (count <= 0) return 0;
   const stacked = (count * (count + 1)) / 2;
   return state.config.bloodValue * stacked * deliveryValue(state);
+}
+
+// ---------------------------------------------------------------- ダイス
+
+/**
+ * このゲームのダイスは、すべて**プレイヤーが決めたあとに振られる**。
+ *
+ * 吸血のダイスは「村にもう1ターン残る」と決めた者にだけ振られ、
+ * 夜明けのダイスは「まだ帰らない」と決めた盤面に対して振られる。
+ * 決定の前に降ってくる乱数（＝天災）は置かない ―― それはただの理不尽で、
+ * 判断の材料にならないため。
+ */
+function roll(state: GameState, faces: number): number {
+  const r = nextRandom(state.rngState);
+  state.rngState = r.state;
+  return Math.floor(r.value * faces);
+}
+
+/** 村で1ターン粘ったときに吸える血。目は config で決まる（既定 1〜3） */
+function rollSuck(state: GameState): number {
+  const faces = state.config.suckFaces;
+  if (faces.length === 0) return 1;
+  return faces[roll(state, faces.length)];
+}
+
+/** 吸血の目の幅と期待値。UI とボットが同じ表を見る */
+export function suckRange(state: GameState): { min: number; max: number; mean: number } {
+  const faces = state.config.suckFaces;
+  const mean = faces.reduce((a, b) => a + b, 0) / faces.length;
+  return { min: Math.min(...faces), max: Math.max(...faces), mean };
+}
+
+/**
+ * 今夜が「必ず続く」残りラウンド数。ここまでは朝が来ないので、
+ * この範囲の往復は完全に計算できる。
+ */
+export function safeRoundsLeft(state: GameState): number {
+  return Math.max(0, state.config.safeRounds - state.intoNight);
+}
+
+/** このラウンドの終わりに朝が来る確率。安全ラウンドのうちは0 */
+export function dawnRisk(state: GameState): number {
+  return safeRoundsLeft(state) > 0 ? 0 : state.config.dawnChance;
 }
 
 // ---------------------------------------------------------------- ターン進行
@@ -350,9 +413,10 @@ export function endTurn(state: GameState): void {
   // 村に留まって夜を明かすほど血が採れる ―― それが引き際の賭け
   if (state.board.cells[player.at].kind === 'village') {
     if (state.bloodPool > 0) {
-      state.bloodPool -= 1;
-      player.carrying += 1;
-      pushLog(state, `${player.name} が村で血を1つ吸った（運搬中 ${player.carrying}）。`, 'good');
+      const got = Math.min(rollSuck(state), state.bloodPool);
+      state.bloodPool -= got;
+      player.carrying += got;
+      pushLog(state, `${player.name} が村で血を ${got} 吸った（運搬中 ${player.carrying}）。`, 'good');
     } else {
       pushLog(state, `${player.name} は村に入ったが、血はもう残っていない。`, 'warn');
     }
@@ -374,7 +438,11 @@ export function endTurn(state: GameState): void {
 function endRound(state: GameState): void {
   moveHunters(state);
 
-  const dawnNow = state.round % state.config.roundsPerNight === 0;
+  state.intoNight += 1;
+  // 最初の safeRounds ラウンドは必ず夜が続く。それを越えてから毎ラウンドの賭けになる
+  const dawnNow =
+    state.intoNight > state.config.safeRounds &&
+    roll(state, 10_000) / 10_000 < state.config.dawnChance;
   if (dawnNow) {
     resolveDawn(state);
     if (state.phase === 'gameover') return;
@@ -385,7 +453,14 @@ function endRound(state: GameState): void {
   state.round += 1;
   state.current = state.startPlayer;
   if (!dawnNow) {
-    pushLog(state, `夜明けまであと ${roundsUntilDawn(state)} ラウンド。`, 'warn');
+    const safe = safeRoundsLeft(state);
+    pushLog(
+      state,
+      safe > 0
+        ? `あと ${safe} ラウンドは朝が来ない。`
+        : `いつ朝が来てもおかしくない（毎ラウンド ${Math.round(state.config.dawnChance * 100)}%）。`,
+      'warn',
+    );
   }
   beginTurn(state);
 }
@@ -417,6 +492,7 @@ function resolveDawn(state: GameState): void {
   }
 
   state.cavesLooted = [];
+  state.intoNight = 0;
 
   if (state.night >= state.config.totalNights) {
     finishGame(state, '規定の夜数が終わった');
@@ -432,7 +508,7 @@ function resolveDawn(state: GameState): void {
     `第${state.night}夜が始まる。先手は ${state.players[state.startPlayer].name}。${
       isFinalNight(state)
         ? '最終夜 ―― 持ち帰った血は3倍。'
-        : `夜明けまで ${state.config.roundsPerNight} ラウンド。`
+        : `${state.config.safeRounds} ラウンドは朝が来ない。`
     }`,
     'info',
   );

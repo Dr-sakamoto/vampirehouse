@@ -11,7 +11,9 @@ import {
   moveAllowance,
   moveTo,
   playBat,
-  roundsUntilDawn,
+  plannedRoundsLeft,
+  safeRoundsLeft,
+  suckRange,
   stealTargets,
   swapTargets,
   flightTargets,
@@ -243,7 +245,9 @@ function stepOffPatrolPath(state: GameState): void {
 export function botTakeTurn(state: GameState): void {
   if (state.phase !== 'playing') return;
   const me = currentPlayer(state);
-  const lastRoundOfNight = roundsUntilDawn(state) === 1;
+  // 確定の夜が尽きた ＝ このラウンドの終わりに朝が来るかもしれない。
+  // 固定4ラウンドだった頃の「最後のラウンド」に相当する
+  const lastRoundOfNight = safeRoundsLeft(state) <= 0;
 
   // --- 手番開始時のカード ---
   const lure = findLureKill(state);
@@ -328,7 +332,7 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
   const me = currentPlayer(state);
   const home = castleOf(state.board, me.index);
   const allowance = moveAllowance(state, me);
-  const turnsAfterThis = Math.max(0, roundsUntilDawn(state) - 1);
+  const turnsAfterThis = Math.max(0, plannedRoundsLeft(state) - 1);
   const nightBudget = me.movesLeft + turnsAfterThis * allowance;
 
   // 最終夜の夜明けを越えても得点は増えない。日陰に隠れる意味はもう無い
@@ -348,9 +352,9 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
 
   // 村に立っている: もう1つ吸うか、引き上げるか
   if (me.at === VILLAGE) {
-    const futureCarry = me.carrying + (state.bloodPool > 0 ? 1 : 0);
-    const futureAllowance = Math.max(1, state.config.baseMove - Math.floor(futureCarry / 2));
-    const budgetAfterStaying = turnsAfterThis * futureAllowance;
+    // 重さが無くなったので、何本抱えても足の速さは変わらない
+    const futureCarry = me.carrying + suckRange(state).mean;
+    const budgetAfterStaying = turnsAfterThis * allowance;
     const homeCost = pathCost(routeTo(state, me, home));
     const refuge = nearestRefuge(state, me);
     // 最終夜は「生き延びる」では足りない。城まで戻れる見込みが要る
@@ -386,15 +390,14 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
     if (refuge && refuge.cost <= nightBudget) return refuge.cell;
   }
   // 村へ着いてから朝までに逃げ切れないなら、そもそも行かない。
-  // 「欲張るほど帰りが遠い」を、出発の時点で計算しておく。
+  // 引き際のコストは足の重さではなく、夜が残っているかどうかで決まる
   const turnsToVillage = turnsToCover(villageCost, me.movesLeft, allowance);
-  const turnsAfterVillage = roundsUntilDawn(state) - turnsToVillage;
-  const carryAllowance = Math.max(1, state.config.baseMove - Math.floor(1 / 2));
+  const turnsAfterVillage = plannedRoundsLeft(state) - turnsToVillage;
   const escape = nearestRefuge(state, me, VILLAGE, true);
   const canEscapeFromVillage =
     turnsAfterVillage >= 0 &&
     escape !== null &&
-    escape.cost <= turnsAfterVillage * carryAllowance;
+    escape.cost <= turnsAfterVillage * allowance;
   if (!canEscapeFromVillage) {
     const refuge = nearestRefuge(state, me);
     if (refuge && refuge.cost <= nightBudget) return refuge.cell;

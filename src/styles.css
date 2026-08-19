@@ -218,7 +218,9 @@ button.ghost { background: transparent; }
 }
 .state.is-hunter { stroke: #a86b00; stroke-width: 8; stroke-opacity: 0.9; }
 
-.state.is-doomed { fill: var(--sun); fill-opacity: 0.22; }
+/* 確定の夜が尽きた瞬間から、朝が来れば焼けるマスすべてに乗る。
+   固定4ラウンドの頃は最後の1ラウンドだけだったが、今は数ラウンド続くので薄めに */
+.state.is-doomed { fill: var(--sun); fill-opacity: 0.13; }
 
 .state.is-shroud { fill: #6b4fd8; fill-opacity: 0.4; }
 
@@ -382,6 +384,13 @@ button.ghost { background: transparent; }
 .gauge-icon { font-size: 15px; line-height: 1; }
 .gauge-night { --pip: #b9a7ff; }
 .gauge-dawn { --pip: var(--sun); }
+/* 確定の夜が尽きたあとは、残りラウンド数ではなく「毎ラウンドの確率」を出す */
+.gauge-dawn .risk {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--sun);
+  font-variant-numeric: tabular-nums;
+}
 .status .stat-blood b { font-size: 15px; }
 .mult {
   font-style: normal;
