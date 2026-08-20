@@ -2,6 +2,7 @@ import { VILLAGE, cellId, isRefugeKind, wrapSector } from './board';
 import {
   batPlayError,
   currentPlayer,
+  dawnRisk,
   endTurn,
   hunterCells,
   hunterNextCell,
@@ -23,9 +24,10 @@ import type { BatKind, GameState, Player } from './types';
 
 /**
  * 欲張りの上限。これ以上抱えたら、次の一口より持ち帰りを優先する。
- * 血が点そのものになったので、単位も点（＝村の一口の平均のおよそ3回ぶん）。
+ * 血が点そのものになったので、単位も点（＝村の一口の平均のおよそ5回ぶん）。
+ * 低すぎると帰りが早すぎて損をする（`npm run balance` で計測して調整）。
  */
-const GREED_CAP = 120;
+const GREED_CAP = 220;
 
 function findBat(player: Player, kind: BatKind): string | null {
   return player.bats.find((b) => b.kind === kind)?.uid ?? null;
@@ -202,17 +204,20 @@ function biteDetour(
   return best?.path ?? null;
 }
 
-/** 誘導カードで血を持った相手を仕留められるなら、その手を返す */
+/** 誘導カードで血を持った相手を仕留められるなら、その手を返す。狙えるなら最も血を積んだ相手を選ぶ */
 function findLureKill(state: GameState): { hunter: string; dir: 1 | -1 } | null {
   const me = currentPlayer(state);
+  let best: { hunter: string; dir: 1 | -1; carrying: number } | null = null;
   for (const hunter of state.hunters) {
     for (const dir of [1, -1] as const) {
       const cell = cellId(hunter.ring, wrapSector(hunter.sector + dir));
       const victim = state.players.find((p) => p.index !== me.index && p.at === cell);
-      if (victim && victim.carrying > 0) return { hunter: hunter.id, dir };
+      if (victim && victim.carrying > 0 && (!best || victim.carrying > best.carrying)) {
+        best = { hunter: hunter.id, dir, carrying: victim.carrying };
+      }
     }
   }
-  return null;
+  return best ? { hunter: best.hunter, dir: best.dir } : null;
 }
 
 /** 経路に沿って、進めるところまで進む */
@@ -260,14 +265,14 @@ export function botTakeTurn(state: GameState): void {
 
   const homeCost = pathCost(routeTo(state, me, castleOf(state.board, me.index)));
   const stealUid = findBat(me, 'steal');
-  if (
-    stealUid &&
-    batPlayError(state, 'steal') === null &&
-    stealTargets(state).length > 0 &&
-    homeCost <= me.movesLeft
-  ) {
-    // このターンで持ち帰れるなら、奪った血はそのまま得点になる
-    playBat(state, stealUid, { player: stealTargets(state)[0] });
+  if (stealUid && batPlayError(state, 'steal') === null && homeCost <= me.movesLeft) {
+    // このターンで持ち帰れるなら、奪った血はそのまま得点になる。狙うのは最も血を積んだ相手
+    const targets = stealTargets(state);
+    const best = targets.reduce<number | null>((acc, i) => {
+      const p = state.players[i];
+      return acc === null || p.carrying > state.players[acc].carrying ? i : acc;
+    }, null);
+    if (best !== null) playBat(state, stealUid, { player: best });
   }
 
   // --- 行き先を決める ---
@@ -314,11 +319,16 @@ export function botTakeTurn(state: GameState): void {
     const swapUid = findBat(swapper, 'swap');
     if (!isSafeCell(state, swapper, swapper.at) && swapUid && batPlayError(state, 'swap') === null) {
       const hunters = new Set(hunterCells(state));
-      const victim = swapTargets(state).find(
+      const candidates = swapTargets(state).filter(
         (i) =>
           isSafeCell(state, swapper, state.players[i].at) && !hunters.has(state.players[i].at),
       );
-      if (victim !== undefined) playBat(state, swapUid, { player: victim });
+      // 押しつけるなら、朝を失って一番痛い（血を一番積んだ）相手を選ぶ
+      const victim = candidates.reduce<number | null>((acc, i) => {
+        const p = state.players[i];
+        return acc === null || p.carrying > state.players[acc].carrying ? i : acc;
+      }, null);
+      if (victim !== null) playBat(state, swapUid, { player: victim });
     }
 
     const after = currentPlayer(state);
@@ -345,6 +355,16 @@ function chooseTarget(state: GameState, lastRoundOfNight: boolean): string | nul
   if (lastRoundOfNight) {
     if (me.at === home) return null;
     const homeCost = pathCost(routeTo(state, me, home));
+
+    // 村にいて、今すぐ帰ろうと思えば帰れるなら「粘るか引くか」は賭けの計算次第。
+    // 朝が来る確率 p に対して、今持っている分を失うリスクより
+    // もう一口の期待値のほうが大きいうちは粘る（持っているほど、pが高いほど慎重になる）
+    if (me.at === VILLAGE && !finalDawn && state.bloodPool > 0 && homeCost <= me.movesLeft) {
+      const p = dawnRisk(state);
+      const meanSuck = suckRange(state).mean;
+      if (p > 0 && p < 1 && me.carrying < (meanSuck * (1 - p)) / p) return null;
+    }
+
     if (homeCost <= me.movesLeft) return home;
     if (finalDawn) return home; // 届かなくても構わない。持ったままでは0点なのだから
     const refuge = nearestRefuge(state, me);
