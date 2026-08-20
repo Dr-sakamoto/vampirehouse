@@ -1,5 +1,6 @@
 import {
   currentPlayer,
+  dawnAnnounced,
   hunterNextCell,
   isSafeCell,
   legalMoves,
@@ -210,14 +211,16 @@ export class BoardView {
     const me = currentPlayer(state);
     const hunterNow = new Set(state.hunters.map((h) => `r${h.ring}s${h.sector}`));
     const hunterSoon = new Set(state.hunters.map(hunterNextCell));
-    // 確定の夜が尽きた瞬間から、どのマスが「危ない」かを塗る
-    const dawnNext = dawnRisk(state) > 0 && state.phase === 'playing';
+    // 空が白んだら（＝夜明けが予告されたら）、安全でないマスをはっきり塗る。
+    // 賭けの段階（確定の夜が尽きただけ）でも薄く警告は出す
+    const dawnNext = (dawnAnnounced(state) || dawnRisk(state) > 0) && state.phase === 'playing';
+    const trapped = new Set(state.traps.map((t) => t.cell));
 
     for (const [id, node] of this.stateNodes) {
       const cell = state.board.cells[id];
       node.classList.toggle('is-danger', hunterSoon.has(id));
       node.classList.toggle('is-hunter', hunterNow.has(id));
-      node.classList.toggle('is-shroud', me.shroudedCell === id);
+      node.classList.toggle('is-trap', trapped.has(id));
       node.classList.toggle('is-doomed', dawnNext && !isSafeCell(state, me, id));
       node.classList.toggle(
         'is-blocked',
@@ -252,7 +255,23 @@ export class BoardView {
       );
     }
 
-    // 三角に番号を振る。コウモリ《誘導》の選択肢と目で結びつけられるように
+    // 仕掛けられた罠。伏せずに全員へ見せる ―― 踏むのは読み違えたときだけ、が原則
+    for (const trap of state.traps) {
+      const cell = state.board.cells[trap.cell];
+      if (!cell) continue;
+      const p = cellCenter(cell);
+      const mark = el('text', {
+        x: p.x,
+        y: p.y + 7,
+        class: 'trap-mark',
+        'text-anchor': 'middle',
+        fill: state.players[trap.owner]?.color ?? '#fff',
+      });
+      mark.textContent = '✳';
+      this.markerLayer.append(mark);
+    }
+
+    // 三角に番号を振る
     state.hunters.forEach((hunter, i) => {
       const cell = state.board.cells[`r${hunter.ring}s${hunter.sector}`];
       const p = cellCenter(cell);

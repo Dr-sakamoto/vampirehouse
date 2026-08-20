@@ -222,7 +222,7 @@ button.ghost { background: transparent; }
    固定4ラウンドの頃は最後の1ラウンドだけだったが、今は数ラウンド続くので薄めに */
 .state.is-doomed { fill: var(--sun); fill-opacity: 0.13; }
 
-.state.is-shroud { fill: #6b4fd8; fill-opacity: 0.4; }
+.state.is-trap { fill: #6b4fd8; fill-opacity: 0.32; }
 
 /* 進める先。丸いチェッカーは置かず、マス目の実形（扇形・円・四角）そのものを
    ふわっと光らせるだけ。当たり判定は .state 側の透明円が別に持つ */
@@ -431,6 +431,9 @@ button.ghost { background: transparent; }
 /* 夜明けが次のラウンドに迫ったら、☀ゲージが脈打つ。文章では言わない */
 .status.is-urgent { border-color: var(--sun); box-shadow: 0 0 0 1px rgb(255 179 71 / 0.25); }
 .status.is-urgent .gauge-dawn { animation: sunrise 1.4s ease-in-out infinite; }
+/* 空が白んだ ―― 賭けは終わり、このラウンドの終わりに必ず朝が来る */
+.status.is-dawn { border-color: var(--sun); background: rgb(255 179 71 / 0.12); box-shadow: 0 0 0 2px rgb(255 179 71 / 0.4); }
+.status.is-dawn .gauge-dawn { animation: sunrise 0.7s ease-in-out infinite; }
 .status.is-over { border-color: #6a5f8f; }
 @keyframes sunrise {
   0%, 100% { opacity: 0.45; }
@@ -669,4 +672,13 @@ button.cancel { align-self: flex-start; padding: 4px 12px; color: var(--muted); 
   .game { font-size: 13.5px; }
   .player-score { font-size: 16px; }
   .hud-left { max-height: 26dvh; }
+}
+
+/* 仕掛けられたスタン罠。伏せずに全員へ見える ―― 踏むのは読み違えたときだけ */
+.trap-mark {
+  font-size: 26px;
+  paint-order: stroke;
+  stroke: rgb(0 0 0 / 0.55);
+  stroke-width: 3px;
+  pointer-events: none;
 }
