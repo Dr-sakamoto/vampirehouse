@@ -52,7 +52,7 @@ npm run dev      # http://localhost:5173
 「村にもう1ターン残る」と決めた者にだけ吸血の目が回り、
 「まだ帰らない」と決めた盤面に対して夜明けの目が振られる。
 決定の前に降ってくる乱数は置いていない（設計の経緯は
-[`docs/design.md`](docs/design.md) §7）。
+[`docs/balance.md`](docs/balance.md) §1）。
 
 2〜4人のホットシート対戦に対応。空いた席はボットが埋める（全席ボットの観戦も可能）。
 
@@ -60,7 +60,9 @@ PWA対応。スマホのブラウザで開いて「ホーム画面に追加」�
 一度開いたページはオフラインでも遊べる（`public/manifest.webmanifest` と `public/sw.js`）。
 
 ルールの詳細と、企画段階で未決定だった項目をどう確定させたかは
-[`docs/design.md`](docs/design.md) にまとめてある。
+[`docs/design.md`](docs/design.md) に、数値の根拠と実測データは
+[`docs/balance.md`](docs/balance.md) に、実装の構成は
+[`docs/architecture.md`](docs/architecture.md) にまとめてある。
 
 ## 構成
 
