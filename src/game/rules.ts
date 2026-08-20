@@ -194,9 +194,9 @@ export function isSafeCell(state: GameState, _player: Player, id: string): boole
   return isRefugeKind(cell.kind);
 }
 
-/** 避難所（テント・洞窟）は定員1。他プレイヤーが立っていれば入れない */
+/** 避難所のうちテントは定員1。他プレイヤーが立っていれば入れない（洞窟は同時に何人でも入れる） */
 function refugeBlocked(state: GameState, id: string, moverIndex: number): boolean {
-  if (!isRefugeKind(state.board.cells[id].kind)) return false;
+  if (state.board.cells[id].kind !== 'shade') return false;
   return state.players.some((p) => p.index !== moverIndex && p.at === id);
 }
 
