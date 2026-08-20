@@ -18,6 +18,7 @@ import type {
   Hunter,
   LogEntry,
   Player,
+  TrailStep,
 } from './types';
 
 export const PLAYER_COLORS = ['#e63946', '#4361ee', '#2a9d3f', '#f4a300'];
@@ -103,6 +104,8 @@ export function createGame(config: GameConfig): GameState {
     phase: 'playing',
     log: [],
     lastBurned: [],
+    trail: [],
+    trailSeq: 0,
     rngState: shuffled.state,
   };
 
@@ -112,6 +115,19 @@ export function createGame(config: GameConfig): GameState {
 }
 
 // ---------------------------------------------------------------- ログ
+
+/** 駒移動を1件記録する（UIのアニメーション・軌跡描画用）。ログと同じく直近のみ保つ */
+function pushTrail(
+  state: GameState,
+  player: number,
+  from: string,
+  to: string,
+  kind: TrailStep['kind'],
+): void {
+  if (from === to) return;
+  state.trail.push({ seq: state.trailSeq++, player, from, to, kind });
+  if (state.trail.length > 200) state.trail.splice(0, state.trail.length - 200);
+}
 
 function pushLog(state: GameState, text: string, tone: LogEntry['tone'] = 'info'): void {
   state.log.push({ round: state.round, night: state.night, text, tone });
@@ -330,8 +346,10 @@ function killPlayer(
   }
   player.deaths += 1;
   player.shroudedCell = null;
+  const origin = player.at;
   player.at = castleOf(state.board, player.index);
   player.movesLeft = 0;
+  pushTrail(state, player.index, origin, player.at, 'teleport');
   if (killer && killer.index !== player.index) killer.kills += 1;
   const spoils =
     lost > 0
@@ -373,8 +391,10 @@ export function moveTo(state: GameState, target: string): boolean {
   if (!legalMoves(state).includes(target)) return false;
 
   const player = currentPlayer(state);
+  const origin = player.at;
   player.at = target;
   player.movesLeft -= 1;
+  pushTrail(state, player.index, origin, target, 'walk');
 
   // ハンターに触れたら即死
   if (hunterCells(state).includes(target)) {
@@ -644,8 +664,10 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
     case 'flight': {
       const options = flightTargets(state);
       const dest = target.cell && options.includes(target.cell) ? target.cell : options[0];
+      const origin = player.at;
       player.at = dest;
       player.movesLeft = 0;
+      pushTrail(state, player.index, origin, dest, 'teleport');
       pushLog(state, `${player.name} が《${spec.name}》で避難所へ舞い降りた。`, 'info');
       if (hunterCells(state).includes(dest)) {
         killPlayer(state, player, 'ハンターの真上に降りてしまった');
@@ -660,9 +682,12 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
           : targets[0];
       const victim = state.players[victimIndex];
       const mine = player.at;
-      player.at = victim.at;
+      const theirs = victim.at;
+      player.at = theirs;
       victim.at = mine;
       player.movesLeft = 0;
+      pushTrail(state, player.index, mine, theirs, 'teleport');
+      pushTrail(state, victim.index, theirs, mine, 'teleport');
       // 影を渡った先が自分の影だったなら、その加護は置いてきたことになる
       if (player.shroudedCell !== null && player.shroudedCell !== player.at) {
         player.shroudedCell = null;

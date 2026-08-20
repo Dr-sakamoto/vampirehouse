@@ -5,7 +5,7 @@ import {
   legalMoves,
   dawnRisk,
 } from '../game/rules';
-import type { GameState } from '../game/types';
+import type { GameState, Player, TrailStep } from '../game/types';
 import {
   CASTLE_RING,
   CENTER,
@@ -16,6 +16,7 @@ import {
   ringSectorPath,
   trianglePath,
 } from './geometry';
+import type { Point } from './geometry';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -38,14 +39,36 @@ export interface BoardViewOptions {
  * ―― ルールに書かれていない飾りは足さない。
  * その上に、当たり判定と状態表示を兼ねる円を重ねる（`geometry.ts` が座標計算）。
  */
+/** 1歩の移動アニメーションにかける時間と、次の一歩までの間 */
+const WALK_MS = 260;
+const WALK_GAP_MS = 90;
+/** 瞬間移動（誘導・影渡り・死亡での帰還）の一時停止。軌跡は引かない */
+const TELEPORT_PAUSE_MS = 320;
+/** 軌跡が消えるまで */
+const TRACE_FADE_MS = 1400;
+
+interface PieceRefs {
+  group: SVGGElement;
+  shadow: SVGCircleElement;
+  body: SVGCircleElement;
+  label: SVGTextElement;
+  badge: SVGGElement;
+  badgeCircle: SVGCircleElement;
+  badgeCount: SVGTextElement;
+}
+
 export class BoardView {
   readonly svg: SVGSVGElement;
   private readonly boardLayer = el('g', { class: 'layer-board' });
   private readonly stateLayer = el('g', { class: 'layer-state' });
   private readonly ghostLayer = el('g', { class: 'layer-ghosts' });
   private readonly markerLayer = el('g', { class: 'layer-markers' });
+  private readonly traceLayer = el('g', { class: 'layer-trace' });
   private readonly pieceLayer = el('g', { class: 'layer-pieces' });
   private readonly stateNodes = new Map<string, SVGCircleElement>();
+  private readonly pieces = new Map<number, PieceRefs>();
+  /** まだアニメーションに反映していない trail の先頭。TrailStep.seq と比較する */
+  private nextTrailSeq = 0;
   private built = false;
 
   constructor(private readonly options: BoardViewOptions) {
@@ -55,7 +78,14 @@ export class BoardView {
       role: 'img',
       'aria-label': 'ヴァンパイア・ハウスの盤面',
     });
-    this.svg.append(this.boardLayer, this.stateLayer, this.ghostLayer, this.markerLayer, this.pieceLayer);
+    this.svg.append(
+      this.boardLayer,
+      this.stateLayer,
+      this.ghostLayer,
+      this.markerLayer,
+      this.traceLayer,
+      this.pieceLayer,
+    );
   }
 
   /**
@@ -139,7 +169,8 @@ export class BoardView {
     this.built = true;
   }
 
-  render(state: GameState, highlight: string[], targeting: string[]): void {
+  /** 戻り値はこのフレームで発生させたアニメーションの総所要時間（ms）。呼び出し側はこの分だけ次の操作を待てる */
+  render(state: GameState, highlight: string[], targeting: string[]): number {
     if (!this.built) this.build(state);
 
     const legal = new Set(highlight);
@@ -166,7 +197,7 @@ export class BoardView {
     }
 
     this.renderMarkers(state);
-    this.renderPieces(state);
+    return this.renderPieces(state);
   }
 
   private renderMarkers(state: GameState): void {
@@ -200,59 +231,176 @@ export class BoardView {
     });
   }
 
-  private renderPieces(state: GameState): void {
-    this.pieceLayer.replaceChildren();
+  private ensurePiece(state: GameState, index: number): PieceRefs {
+    let refs = this.pieces.get(index);
+    if (refs) return refs;
+
+    const player = state.players[index];
+    const group = el('g', { class: 'piece' });
+    const shadow = el('circle', { cx: 0, cy: 2, class: 'piece-shadow' });
+    const body = el('circle', { cx: 0, cy: 0, class: 'piece-body', fill: player.color });
+    const label = el('text', { x: 0, y: 6, class: 'piece-label', 'text-anchor': 'middle' });
+    label.textContent = String(index + 1);
+    const badgeCircle = el('circle', { cx: 0, cy: 0, r: 9 });
+    const badgeCount = el('text', { x: 0, y: 4, 'text-anchor': 'middle', class: 'piece-blood-count' });
+    const badge = el('g', { class: 'piece-blood' });
+    badge.append(badgeCircle, badgeCount);
+    group.append(shadow, body, label, badge);
+    this.pieceLayer.append(group);
+
+    // 初回はそのマスへ、いきなり出す（滑らせない）
+    const start = cellCenter(state.board.cells[player.at]);
+    group.style.transform = `translate(${start.x}px, ${start.y}px)`;
+
+    refs = { group, shadow, body, label, badge, badgeCircle, badgeCount };
+    this.pieces.set(index, refs);
+    return refs;
+  }
+
+  /** transform（位置）だけを設定する。animate=false なら遷移させずに一瞬で置く */
+  private placePiece(refs: PieceRefs, point: Point, animate: boolean): void {
+    if (!animate) {
+      refs.group.style.transition = 'none';
+      refs.group.style.transform = `translate(${point.x}px, ${point.y}px)`;
+      // 次にアニメーションさせたい変更まで transition: none が残らないよう、1フレーム後に戻す
+      refs.group.getBoundingClientRect();
+      refs.group.style.transition = '';
+      return;
+    }
+    refs.group.style.transform = `translate(${point.x}px, ${point.y}px)`;
+  }
+
+  /** ラベル・血バッジ・見た目（現在番・大きさ）は毎フレーム即座に反映する。位置だけは別扱い */
+  private applyPieceLook(refs: PieceRefs, player: Player, stacked: boolean, isCurrent: boolean): void {
+    const pieceRadius = stacked ? 13 : 17;
+    refs.group.classList.toggle('is-current', isCurrent);
+    refs.shadow.setAttribute('r', String(pieceRadius + 2));
+    refs.body.setAttribute('r', String(pieceRadius));
+    refs.label.setAttribute('y', String(stacked ? 5 : 6));
+    refs.label.classList.toggle('is-small', stacked);
+    if (player.carrying > 0) {
+      refs.badge.style.display = '';
+      const badgeX = pieceRadius + 1;
+      const badgeY = -pieceRadius + 1;
+      refs.badgeCircle.setAttribute('cx', String(badgeX));
+      refs.badgeCircle.setAttribute('cy', String(badgeY));
+      refs.badgeCount.setAttribute('x', String(badgeX));
+      refs.badgeCount.setAttribute('y', String(badgeY + 4));
+      refs.badgeCount.textContent = String(player.carrying);
+    } else {
+      refs.badge.style.display = 'none';
+    }
+  }
+
+  /** 駒が最終的に落ち着く場所（同じマスに複数いれば散らす） */
+  private finalPositions(state: GameState): Map<number, Point> {
     const byCell = new Map<string, number[]>();
     for (const p of state.players) {
       const list = byCell.get(p.at) ?? [];
       list.push(p.index);
       byCell.set(p.at, list);
     }
-
+    const positions = new Map<number, Point>();
     for (const [cellId, indices] of byCell) {
-      const cell = state.board.cells[cellId];
-      const base = cellCenter(cell);
-      const stacked = indices.length > 1;
-      const spreadRadius = stacked ? 19 : 0;
-      const pieceRadius = stacked ? 13 : 17;
+      const base = cellCenter(state.board.cells[cellId]);
+      const spreadRadius = indices.length > 1 ? 19 : 0;
       indices.forEach((index, slot) => {
-        const player = state.players[index];
         const angle = (slot / indices.length) * Math.PI * 2 - Math.PI / 2;
-        const x = base.x + spreadRadius * Math.cos(angle);
-        const y = base.y + spreadRadius * Math.sin(angle);
-        const group = el('g', {
-          class: `piece ${index === state.current ? 'is-current' : ''}`,
+        positions.set(index, {
+          x: base.x + spreadRadius * Math.cos(angle),
+          y: base.y + spreadRadius * Math.sin(angle),
         });
-        group.append(
-          el('circle', { cx: x, cy: y + 2, r: pieceRadius + 2, class: 'piece-shadow' }),
-          el('circle', { cx: x, cy: y, r: pieceRadius, class: 'piece-body', fill: player.color }),
-        );
-        const label = el('text', {
-          x,
-          y: y + (stacked ? 5 : 6),
-          class: `piece-label${stacked ? ' is-small' : ''}`,
-          'text-anchor': 'middle',
-        });
-        label.textContent = String(index + 1);
-        group.append(label);
-        if (player.carrying > 0) {
-          const badgeX = x + pieceRadius + 1;
-          const badgeY = y - pieceRadius + 1;
-          const badge = el('g', { class: 'piece-blood' });
-          badge.append(el('circle', { cx: badgeX, cy: badgeY, r: 9 }));
-          const count = el('text', {
-            x: badgeX,
-            y: badgeY + 4,
-            'text-anchor': 'middle',
-            class: 'piece-blood-count',
-          });
-          count.textContent = String(player.carrying);
-          badge.append(count);
-          group.append(badge);
-        }
-        this.pieceLayer.append(group);
       });
     }
+    return positions;
+  }
+
+  /** 通った道に、色つきの線を一瞬引いて消す ―― 何が起きたかを後からでも読めるように */
+  private drawTraceSegment(state: GameState, from: string, to: string, player: number): void {
+    const a = cellCenter(state.board.cells[from]);
+    const b = cellCenter(state.board.cells[to]);
+    const line = el('line', {
+      x1: a.x,
+      y1: a.y,
+      x2: b.x,
+      y2: b.y,
+      class: 'trace-segment',
+    });
+    line.style.stroke = state.players[player].color;
+    this.traceLayer.append(line);
+    window.setTimeout(() => line.remove(), TRACE_FADE_MS);
+  }
+
+  /**
+   * 1人ぶんの手番で起きた移動を、順番どおりに再生する。
+   * CPUが何手も一気に済ませても、ここで1歩ずつ見せ直す。
+   */
+  private animateChain(state: GameState, index: number, steps: TrailStep[], finalPos: Point): number {
+    const refs = this.ensurePiece(state, index);
+    let elapsed = 0;
+
+    const runStep = (i: number): void => {
+      if (i >= steps.length) {
+        this.placePiece(refs, finalPos, true);
+        return;
+      }
+      const step = steps[i];
+      if (step.kind === 'walk') {
+        this.drawTraceSegment(state, step.from, step.to, index);
+        this.placePiece(refs, cellCenter(state.board.cells[step.to]), true);
+      } else {
+        this.placePiece(refs, cellCenter(state.board.cells[step.to]), false);
+      }
+      const gap = step.kind === 'walk' ? WALK_MS + WALK_GAP_MS : TELEPORT_PAUSE_MS;
+      window.setTimeout(() => runStep(i + 1), gap);
+    };
+
+    for (const step of steps) {
+      elapsed += step.kind === 'walk' ? WALK_MS + WALK_GAP_MS : TELEPORT_PAUSE_MS;
+    }
+    runStep(0);
+    return elapsed;
+  }
+
+  private renderPieces(state: GameState): number {
+    const finalPos = this.finalPositions(state);
+    const byCell = new Map<string, number[]>();
+    for (const p of state.players) {
+      const list = byCell.get(p.at) ?? [];
+      list.push(p.index);
+      byCell.set(p.at, list);
+    }
+    for (const indices of byCell.values()) {
+      for (const index of indices) {
+        const refs = this.ensurePiece(state, index);
+        this.applyPieceLook(refs, state.players[index], indices.length > 1, index === state.current);
+      }
+    }
+
+    const newSteps = state.trail.filter((t) => t.seq >= this.nextTrailSeq);
+    this.nextTrailSeq = state.trailSeq;
+
+    const chains = new Map<number, TrailStep[]>();
+    for (const step of newSteps) {
+      const list = chains.get(step.player) ?? [];
+      list.push(step);
+      chains.set(step.player, list);
+    }
+
+    let totalMs = 0;
+    for (const [index, steps] of chains) {
+      const target = finalPos.get(index);
+      if (!target) continue;
+      totalMs = Math.max(totalMs, this.animateChain(state, index, steps, target));
+    }
+
+    // 動きが無かった駒も、詰め直された分（同じマスに集まった等）は滑らせて追従させる
+    for (const [index, point] of finalPos) {
+      if (chains.has(index)) continue;
+      this.placePiece(this.ensurePiece(state, index), point, true);
+    }
+
+    return totalMs;
   }
 
   /** 夜明けの閃光 */

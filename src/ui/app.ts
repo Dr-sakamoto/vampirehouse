@@ -190,21 +190,23 @@ export class App {
     this.render();
   }
 
-  private scheduleBot(): void {
+  private scheduleBot(delayMs: number = BOT_STEP_MS): void {
     if (this.botTimer !== null) window.clearTimeout(this.botTimer);
     if (this.state.phase !== 'playing' || !currentPlayer(this.state).isBot) return;
     this.botTimer = window.setTimeout(() => {
       this.botTimer = null;
       if (this.state.phase !== 'playing') return;
       botTakeTurn(this.state);
-      this.render();
-      this.scheduleBot();
-    }, BOT_STEP_MS);
+      const animMs = this.render();
+      // 何手も指した手番ほど、盤面が動き終わるまで次の手番を待たせる
+      // ―― CPUが一瞬で打ち終えても、足取りを目で追えるようにする
+      this.scheduleBot(Math.max(BOT_STEP_MS, animMs + 150));
+    }, delayMs);
   }
 
   // -------------------------------------------------------------- 描画
 
-  private render(): void {
+  private render(): number {
     if (this.state.night !== this.lastNight || this.state.phase === 'gameover') {
       if (this.state.lastBurned.length > 0 || this.state.night !== this.lastNight) {
         this.board.flashDawn();
@@ -213,12 +215,17 @@ export class App {
     }
 
     const showMoves = this.humanTurn && this.targeting.kind === 'none';
-    this.board.render(this.state, showMoves ? legalMoves(this.state) : [], this.targetCells());
+    const animMs = this.board.render(
+      this.state,
+      showMoves ? legalMoves(this.state) : [],
+      this.targetCells(),
+    );
     this.renderStatus();
     this.renderPlayers();
     this.renderHand();
     this.renderControls();
     this.renderLog();
+    return animMs;
   }
 
   private targetCells(): string[] {

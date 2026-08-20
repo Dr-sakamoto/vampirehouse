@@ -267,6 +267,12 @@ button.ghost { background: transparent; }
 
 /* --- コマ --- */
 
+/* 駒本体は g.piece の transform（translate）で動かす。滑って進むから、
+   CPUが何手指しても足取りが目で追える */
+.piece {
+  transition: transform 260ms ease;
+  pointer-events: none;
+}
 .piece-shadow { fill: rgb(0 0 0 / 0.28); }
 .piece-body { stroke: var(--ink); stroke-width: 4; }
 .piece-label { font-size: 19px; font-weight: 800; fill: #fff; pointer-events: none; }
@@ -274,6 +280,20 @@ button.ghost { background: transparent; }
 .piece.is-current .piece-body { stroke: #fff; stroke-width: 6; }
 .piece-blood circle { fill: #8c0f1c; stroke: var(--paper); stroke-width: 3; }
 .piece-blood-count { font-size: 13px; font-weight: 800; fill: #fff; }
+
+/* --- 軌跡 --- */
+
+.layer-trace { pointer-events: none; }
+.trace-segment {
+  stroke-width: 7;
+  stroke-linecap: round;
+  opacity: 0.6;
+  animation: trace-fade 1.4s ease-out forwards;
+}
+@keyframes trace-fade {
+  0% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
 
 .dawn-flash {
   fill: var(--sun);
