@@ -35,13 +35,6 @@ export const PLAYER_NAMES = ['紅の城', '蒼の城', '翠の城', '金の城']
  */
 const DEFAULT_BLOOD_VALUE = 10;
 
-/**
- * 洞窟を1度訪れて引けるコウモリの枚数。洞窟を4つから2つへ減らしたぶん、
- * 盤面へ流れ込むカードの量が半分になるので、1つあたりの群れを倍にして
- * カードの総流量を元に戻している（`docs/design.md` §8）。
- */
-export const CAVE_DRAW = 2;
-
 export function defaultConfig(playerCount = 2, bots?: boolean[]): GameConfig {
   return {
     playerCount,
@@ -102,7 +95,6 @@ export function createGame(config: GameConfig): GameState {
     deck: shuffled.items,
     discard: [],
     bloodPool: config.bloodPool,
-    cavesLooted: [],
     round: 1,
     intoNight: 0,
     night: 1,
@@ -417,19 +409,11 @@ export function moveTo(state: GameState, target: string): boolean {
   // 自分の城に入ったら血が得点になる
   bankBlood(state, player);
 
-  // 洞窟でコウモリを拾う（1つの洞窟は一夜に1回、1ターンに1度まで）。
-  // 洞窟が2つしかないぶん、1度の訪問で CAVE_DRAW 枚が付いてくる
-  if (
-    cell.kind === 'cave' &&
-    !player.lootedCaveThisTurn &&
-    !state.cavesLooted.includes(target)
-  ) {
+  // 洞窟でコウモリを拾う（誰が先に通ったかは関係なく、通過するたびに1枚）。
+  if (cell.kind === 'cave' && !player.lootedCaveThisTurn) {
     if (drawBat(state, player)) {
-      let drawn = 1;
-      while (drawn < CAVE_DRAW && drawBat(state, player)) drawn++;
-      state.cavesLooted.push(target);
       player.lootedCaveThisTurn = true;
-      pushLog(state, `${player.name} が洞窟でコウモリを${drawn}枚得た。`, 'good');
+      pushLog(state, `${player.name} が洞窟でコウモリを1枚得た。`, 'good');
     }
   }
 
@@ -521,7 +505,6 @@ function resolveDawn(state: GameState): void {
     p.shroudedCell = null;
   }
 
-  state.cavesLooted = [];
   state.intoNight = 0;
 
   if (state.night >= state.config.totalNights) {

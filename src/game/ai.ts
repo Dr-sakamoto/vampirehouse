@@ -151,7 +151,6 @@ function turnsToCover(steps: number, movesNow: number, allowance: number): numbe
 function cheapCaveDetour(state: GameState, me: Player, directCost: number): string | null {
   let best: { cell: string; extra: number } | null = null;
   for (const cave of state.board.caveCells) {
-    if (state.cavesLooted.includes(cave)) continue;
     const toCave = pathCost(routeTo(state, me, cave));
     if (toCave === Number.POSITIVE_INFINITY) continue;
     const caveToVillage = pathCost(safePath(state, cave, VILLAGE, blockedCells(state, me)));

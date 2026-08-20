@@ -138,8 +138,6 @@ export interface GameState {
   discard: BatCard[];
   /** 村に残っている血 */
   bloodPool: number;
-  /** 今夜、既に採掘済みの洞窟（夜明けでリセット） */
-  cavesLooted: string[];
   /** 1始まりの通算ラウンド数 */
   round: number;
   /** 今夜が始まってから経過したラウンド数（夜明けで0に戻る） */
