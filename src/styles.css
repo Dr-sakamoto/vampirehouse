@@ -178,7 +178,7 @@ button.ghost { background: transparent; }
 
 .cell-shape { stroke: var(--night-0); stroke-width: 2; pointer-events: none; }
 .cell-village { fill: var(--blood); }
-.cell-plain { fill: var(--paper); fill-opacity: 0.14; }
+.cell-plain { fill: #f5deb3; fill-opacity: 0.55; }
 .cell-cave { fill: var(--cave); fill-opacity: 0.4; }
 .cell-shade { fill: var(--shade); fill-opacity: 0.32; }
 
