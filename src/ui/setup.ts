@@ -9,7 +9,6 @@ interface ParamSpec {
     | 'dawnPercent'
     | 'totalNights'
     | 'bloodPool'
-    | 'bloodValue'
     | 'batsPerTurn';
   label: string;
   min: number;
@@ -54,18 +53,10 @@ const PARAM_SPECS: ParamSpec[] = [
   {
     key: 'bloodPool',
     label: '村の血の総量',
-    min: 4,
-    max: 60,
-    step: 1,
-    hint: (v) => `血 ${v} 個`,
-  },
-  {
-    key: 'bloodValue',
-    label: '血1つの得点',
-    min: 1,
-    max: 30,
-    step: 1,
-    hint: (v) => `1本目 ${v} 点 / 2本まとめて ${v * 3} 点`,
+    min: 100,
+    max: 2000,
+    step: 50,
+    hint: (v) => `血 ${v}`,
   },
   {
     key: 'batsPerTurn',
@@ -90,7 +81,6 @@ export function renderSetup(
     dawnPercent: Math.round(base.dawnChance * 100),
     totalNights: base.totalNights,
     bloodPool: base.bloodPool,
-    bloodValue: base.bloodValue,
     batsPerTurn: base.batsPerTurn,
   };
   let bloodPoolTouched = false;
@@ -127,9 +117,9 @@ export function renderSetup(
         <summary>遊びかた</summary>
         <ul>
           <li><b>移動</b> 毎ターン3歩。同心円に沿って横へ、放射線に沿って内外へ。</li>
-          <li><b>血</b> 中心の村でターンを終えるたびに1つ吸える。自分の城に入った瞬間に得点になる。持ち帰るまでは0点。</li>
-          <li><b>得点</b> 同時に運んでいる血は、1本目10点・2本目20点・3本目30点と積み上がる（3本まとめて持ち帰れば60点）。</li>
-          <li><b>吸血</b> 村でターンを終えるたびに <b>1〜3</b> 本吸える。何本出るかは振ってみるまで分からない。何本抱えても足は鈍らない。</li>
+          <li><b>血</b> 中心の村で吸い、自分の城に入った瞬間に得点になる。持ち帰るまでは0点。</li>
+          <li><b>吸血</b> 村でターンを終えるたびに <b>10 / 20 / 30 / 50 / 100</b> のどれかを吸える。いくつ出るかは振ってみるまで分からない。いくら抱えても足は鈍らない。</li>
+          <li><b>血＝点</b> 抱えている血の数字が、そのまま持ち帰ったときの得点。換算式は無い。</li>
           <li><b>朝</b> 最初の <b>3</b> ラウンドは必ず夜が続く。そのあとは<b>毎ラウンド 1/3 で朝が来る</b>。日陰か城にいなければ、抱えた血をすべて失う。</li>
           <li><b>太陽</b> 4ラウンドごとに夜が明ける。避難所か城にいない者は焼かれ、抱えた血をすべて失う。</li>
           <li><b>避難所</b> テント4つ＋洞窟2つの計6マスだけ。<b>すべて定員1人</b>。リング2のテントはハンターの巡回路と重なっている。</li>
@@ -138,7 +128,7 @@ export function renderSetup(
           <li><b>噛みつき</b> 血を積んだ相手のマスへ踏み込むと、血を1つ奪う（1ターン1回）。村と城では起こらない。</li>
           <li><b>仕留め</b> 誘導・影渡りで相手をハンターに触れさせると、相手の血はすべて自分のものになる。</li>
           <li><b>先手</b> 夜ごとに1つずつ回る。</li>
-          <li><b>決着</b> 4夜が明けたら終わり。最終夜の持ち帰りは3倍。</li>
+          <li><b>決着</b> 4夜が明けたら終わり。<b>最終夜は村が3倍濃い</b>（持ち帰りの倍率ではなく、湧く血そのものが増える）。</li>
         </ul>
         <h3>コウモリ</h3>
         <ul class="bat-list">
@@ -215,7 +205,6 @@ export function renderSetup(
       params.dawnPercent = Math.round(defaults.dawnChance * 100);
       params.totalNights = defaults.totalNights;
       params.bloodPool = defaults.bloodPool;
-      params.bloodValue = defaults.bloodValue;
       params.batsPerTurn = defaults.batsPerTurn;
       bloodPoolTouched = false;
       paramsOpen = true;
@@ -230,7 +219,6 @@ export function renderSetup(
       config.dawnChance = params.dawnPercent / 100;
       config.totalNights = params.totalNights;
       config.bloodPool = params.bloodPool;
-      config.bloodValue = params.bloodValue;
       config.batsPerTurn = params.batsPerTurn;
       config.seed = Math.floor(Math.random() * 1_000_000);
       onStart(config);

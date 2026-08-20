@@ -64,7 +64,8 @@ function measure(playerCount: number, tweak?: (c: GameConfig) => void) {
     leftover: avg(leftover),
     rounds: avg(rounds),
     haul: avg(hauls),
-    bigHaul: hauls.filter((h) => h >= 3).length / (hauls.length || 1),
+    bigHaul: hauls.filter((h) => h >= 100).length / (hauls.length || 1),
+    hauls,
   };
 }
 
@@ -75,6 +76,23 @@ for (const playerCount of [2, 3, 4]) {
       `  無得点率 ${f(m.shutout * 100, 0)}%  死亡 ${f(m.deaths)}` +
       `  奪った血 ${f(m.stolen)}  仕留め ${f(m.kills)}` +
       `  勝差 ${f(m.margin)}  村の残り血 ${f(m.leftover)}` +
-      `  全${f(m.rounds, 1)}R  1回の持ち帰り ${f(m.haul)}本  3本以上 ${f(m.bigHaul * 100, 0)}%`,
+      `  全${f(m.rounds, 1)}R  1回の持ち帰り ${f(m.haul, 0)}  100以上 ${f(m.bigHaul * 100, 0)}%`,
   );
+}
+
+
+// 持ち帰り1回ぶんの当たりの散らばり ―― ここが「ドーパミンの出方」そのもの
+console.log('\n1回の持ち帰りの分布（2人戦）');
+const bands: Array<[string, (h: number) => boolean]> = [
+  ['〜30', (h) => h <= 30],
+  ['40〜60', (h) => h > 30 && h <= 60],
+  ['70〜100', (h) => h > 60 && h <= 100],
+  ['110〜200', (h) => h > 100 && h <= 200],
+  ['201〜', (h) => h > 200],
+];
+const all = measure(2).hauls;
+for (const [label, hit] of bands) {
+  const n = all.filter(hit).length;
+  const pct = (n / all.length) * 100;
+  console.log(`  ${label.padStart(8)}  ${'█'.repeat(Math.round(pct / 2)).padEnd(30)} ${f(pct, 0)}%`);
 }
