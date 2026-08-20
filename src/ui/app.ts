@@ -328,7 +328,7 @@ export class App {
     hint.title = `このターンあと ${playsLeft} 枚まで使える`;
 
     if (me.bats.length === 0) {
-      hand.innerHTML = `<p class="empty" title="洞窟（${ICON.bat}）を通れば1枚引ける">${ICON.bat}<b>0</b></p>`;
+      hand.innerHTML = `<p class="empty" title="洞窟（${ICON.bat}）を通れば2枚引ける">${ICON.bat}<b>0</b></p>`;
       return;
     }
 

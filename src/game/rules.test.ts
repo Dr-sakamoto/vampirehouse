@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { RING_COUNT, VILLAGE, cellId, shortestPath } from './board';
 import { BAT_SPECS } from './bats';
 import {
+  CAVE_DRAW,
   createGame,
   currentPlayer,
   defaultConfig,
@@ -362,12 +363,12 @@ describe('ハンター', () => {
 });
 
 describe('洞窟とコウモリ', () => {
-  it('洞窟に入るとコウモリを1枚引く', () => {
+  it(`洞窟に入るとコウモリを${CAVE_DRAW}枚引く`, () => {
     const state = newGame(2);
     const cave = state.board.caveCells[0];
     teleport(state, 0, state.board.cells[cave].neighbors[0]);
     moveTo(state, cave);
-    expect(state.players[0].bats).toHaveLength(1);
+    expect(state.players[0].bats).toHaveLength(CAVE_DRAW);
     expect(state.cavesLooted).toContain(cave);
   });
 
@@ -379,7 +380,7 @@ describe('洞窟とコウモリ', () => {
     moveTo(state, cave);
     moveTo(state, gate);
     moveTo(state, cave);
-    expect(state.players[0].bats).toHaveLength(1);
+    expect(state.players[0].bats).toHaveLength(CAVE_DRAW);
   });
 
   it('夜が明けると洞窟は復活する', () => {
@@ -392,7 +393,7 @@ describe('洞窟とコウモリ', () => {
     expect(state.cavesLooted).toHaveLength(0);
   });
 
-  it('1ターンに拾えるコウモリは1枚まで', () => {
+  it('1ターンに拾える洞窟は1つまで', () => {
     const state = newGame(2);
     const [caveA, caveB] = state.board.caveCells;
     const path = shortestPath(state.board, caveA, caveB)!;
