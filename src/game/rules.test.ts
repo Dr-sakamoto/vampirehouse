@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { RING_COUNT, VILLAGE, cellId, shortestPath } from './board';
 import { BAT_SPECS } from './bats';
 import {
+  batPlayError,
   biteAmount,
+  dawnAnnounced,
   createGame,
   currentPlayer,
   defaultConfig,
@@ -18,6 +20,7 @@ import {
   safeRoundsLeft,
   suckRange,
   swapTargets,
+  trapAt,
   winnerIndices,
 } from './rules';
 import type { BatKind, GameState } from './types';
@@ -159,13 +162,9 @@ describe('血の回収と持ち帰り', () => {
 
   it('城の中で手に入れた血も、ターン終了時に得点になる', () => {
     const state = newGame(2);
-    // 城に立ったまま《強奪》で血を得る
-    state.players[1].carrying = 20;
-    teleport(state, 1, VILLAGE);
-    const uid = giveBat(state, 0, 'steal');
     expect(state.board.cells[state.players[0].at].kind).toBe('castle');
-    playBat(state, uid, { player: 1 });
-    expect(state.players[0].carrying).toBe(10);
+    // 城に立ったまま血が増えても、宙に浮いたままにはならない
+    state.players[0].carrying = 10;
     endTurn(state);
     expect(state.players[0].score).toBe(10);
     expect(state.players[0].carrying).toBe(0);
@@ -243,13 +242,15 @@ describe('移動力', () => {
   it('移動力はターン開始時に確定し、ターン中に血を得ても変わらない', () => {
     const state = newGame(2);
     state.players[0].carrying = 0;
-    const uid = giveBat(state, 0, 'steal');
+    // 噛みついて血を積んでも、足の速さは変わらない
+    const spot = cellId(1, 0);
+    teleport(state, 0, cellId(2, 0));
+    teleport(state, 1, spot);
     state.players[1].carrying = 40;
-    teleport(state, 1, VILLAGE);
     expect(currentPlayer(state).movesLeft).toBe(3);
-    playBat(state, uid, { player: 1 });
+    moveTo(state, spot);
     expect(state.players[0].carrying).toBe(20);
-    expect(currentPlayer(state).movesLeft).toBe(3);
+    expect(currentPlayer(state).movesLeft).toBe(2);
   });
 });
 
@@ -261,14 +262,68 @@ describe('太陽（夜明け）', () => {
       const state = createGame(config);
       expect(safeRoundsLeft(state)).toBe(config.safeRounds);
       expect(dawnRisk(state)).toBe(0);
+      expect(dawnAnnounced(state)).toBe(false);
       for (let i = 0; i < config.safeRounds; i++) {
         passRound(state);
         expect(state.night).toBe(1);
       }
-      // 使い切った時点で、毎ラウンドの賭けが始まる
+      // ここまでは必ず夜。使い切った時点で、既に空が白んでいるか賭けが続いている
       expect(safeRoundsLeft(state)).toBe(0);
-      expect(dawnRisk(state)).toBe(config.dawnChance);
+      expect(dawnAnnounced(state) || dawnRisk(state) === config.dawnChance).toBe(true);
     }
+  });
+
+  it('夜明けは1ラウンド前に予告される ―― 賭けは「朝が来るか」ではなく「間に合うか」', () => {
+    const config = defaultConfig(2, [false, false]);
+    config.dawnChance = 1; // 予告できる最初のラウンドで必ず当たる
+    const state = createGame(config);
+
+    // 確定の夜のあいだは、予告すら出ない
+    for (let i = 0; i < config.safeRounds - 1; i++) {
+      passRound(state);
+      expect(dawnAnnounced(state)).toBe(false);
+    }
+    // 確定の夜の最後のラウンドを終えた時点で空が白む
+    passRound(state);
+    expect(dawnAnnounced(state)).toBe(true);
+    expect(state.night).toBe(1); // まだ朝ではない ―― 逃げる1ラウンドが残っている
+    expect(dawnRisk(state)).toBe(0); // 賭けはもう終わっている
+
+    // 予告されたラウンドの終わりに、必ず朝が来る
+    passRound(state);
+    expect(state.night).toBe(2);
+    expect(dawnAnnounced(state)).toBe(false);
+  });
+
+  it('予告ラウンドの猶予は1ラウンドぶん ―― 村からテントへは届き、洞窟へは届かない', () => {
+    const config = defaultConfig(2, [false, false]);
+    config.dawnChance = 1;
+    const state = createGame(config);
+    for (let i = 0; i < config.safeRounds; i++) passRound(state);
+    expect(dawnAnnounced(state)).toBe(true);
+
+    teleport(state, 0, VILLAGE);
+    const allowance = moveAllowance(state, state.players[0]);
+    for (const tent of state.board.shadeCells) {
+      expect(shortestPath(state.board, VILLAGE, tent)!.length - 1).toBeLessThanOrEqual(allowance);
+    }
+    for (const cave of state.board.caveCells) {
+      expect(shortestPath(state.board, VILLAGE, cave)!.length - 1).toBeGreaterThan(allowance);
+    }
+  });
+
+  it('夜明けで罠と傘は消える', () => {
+    const state = newGame(2);
+    state.config.dawnChance = 1;
+    const spot = cellId(1, 0);
+    teleport(state, 0, spot);
+    playBat(state, giveBat(state, 0, 'snare'));
+    playBat(state, giveBat(state, 0, 'parasol'));
+    expect(state.traps).toHaveLength(1);
+    for (let i = 0; i < 12 && state.night === 1; i++) passRound(state);
+    expect(state.night).toBe(2);
+    expect(state.traps).toHaveLength(0);
+    expect(state.players.every((p) => !p.parasol)).toBe(true);
   });
 
   it('安全ラウンドを過ぎれば、いつかは必ず朝が来る', () => {
@@ -408,91 +463,150 @@ describe('洞窟とコウモリ', () => {
 });
 
 describe('コウモリの効果', () => {
-  it('疾走: 移動力+2', () => {
+  it('スタン罠: 足元に仕掛けられ、村と城には置けない', () => {
     const state = newGame(2);
-    const uid = giveBat(state, 0, 'dash');
-    expect(currentPlayer(state).movesLeft).toBe(3);
-    playBat(state, uid);
-    expect(currentPlayer(state).movesLeft).toBe(5);
-  });
+    // 城の中では仕掛けられない
+    expect(batPlayError(state, 'snare')).not.toBeNull();
+    teleport(state, 0, VILLAGE);
+    expect(batPlayError(state, 'snare')).not.toBeNull();
 
-  it('誘導: ハンターを1マス動かし、踏まれた者は死ぬ', () => {
-    const state = newGame(2);
-    const uid = giveBat(state, 0, 'lure');
-    const hunter = state.hunters[0];
-    const victimCell = cellId(hunter.ring, (hunter.sector + 1) % 8);
-    teleport(state, 1, victimCell);
-    state.players[1].carrying = 2;
-    playBat(state, uid, { hunter: hunter.id, dir: 1 });
-    expect(state.players[1].deaths).toBe(1);
-    expect(state.players[1].carrying).toBe(0);
-  });
-
-  it('強奪: 城の外にいる相手からのみ奪える', () => {
-    const state = newGame(2);
-    state.players[1].carrying = 40;
-    // 城の中は安全
-    teleport(state, 1, state.board.castleCells[1]);
-    const uid = giveBat(state, 0, 'steal');
-    expect(playBat(state, uid, { player: 1 })).toBe(false);
-    // 外に出れば奪える（半分）
-    teleport(state, 1, VILLAGE);
-    expect(playBat(state, uid, { player: 1 })).toBe(true);
-    expect(state.players[0].carrying).toBe(20);
-    expect(state.players[1].carrying).toBe(20);
-  });
-
-  it('影紡ぎ: そのマスを今夜だけ日陰にする', () => {
-    const state = newGame(2);
-    const uid = giveBat(state, 0, 'shroud');
-    // ハンターの巡回リングを避けた、何もないマス
     const spot = cellId(1, 0);
     teleport(state, 0, spot);
-    expect(isSafeCell(state, state.players[0], spot)).toBe(false);
-    playBat(state, uid);
-    expect(isSafeCell(state, state.players[0], spot)).toBe(true);
+    const uid = giveBat(state, 0, 'snare');
+    expect(playBat(state, uid)).toBe(true);
+    expect(trapAt(state, spot)?.owner).toBe(0);
+  });
 
-    state.players[0].carrying = 2;
-    for (let i = 0; i < 4; i++) passRound(state);
-    // 夜明けを生き延び、効果は消えている
+  it('スタン罠: 踏んだ相手は弾き返され、足を止められる。罠は消える', () => {
+    const state = newGame(2);
+    const spot = cellId(1, 0);
+    teleport(state, 0, spot);
+    playBat(state, giveBat(state, 0, 'snare'));
+    endTurn(state);
+
+    // 相手が踏み込む
+    const from = cellId(2, 0);
+    teleport(state, 1, from);
+    expect(currentPlayer(state).index).toBe(1);
+    expect(currentPlayer(state).movesLeft).toBe(3);
+    moveTo(state, spot);
+    // 罠のマスには入れていない ―― 元いた場所へ弾き返される
+    expect(state.players[1].at).toBe(from);
+    expect(state.players[1].movesLeft).toBe(0);
+    expect(trapAt(state, spot)).toBeUndefined();
+  });
+
+  it('スタン罠: 避難所に置けば、その椅子そのものが目的地として潰れる', () => {
+    const state = newGame(2);
+    const tent = state.board.shadeCells[0];
+    const from = state.board.cells[tent].neighbors.find(
+      (id) => state.board.cells[id].kind === 'plain',
+    )!;
+    teleport(state, 0, tent);
+    playBat(state, giveBat(state, 0, 'snare'));
+    teleport(state, 0, state.board.castleCells[0]);
+    endTurn(state);
+
+    teleport(state, 1, from);
+    moveTo(state, tent);
+    // 迂回路が無い ―― 椅子そのものが罠なので、座れないまま足も止まる
+    expect(state.players[1].at).toBe(from);
+    expect(state.players[1].movesLeft).toBe(0);
+  });
+
+  it('スタン罠: 仕掛けた本人は踏んでも作動しない', () => {
+    const state = newGame(2);
+    const spot = cellId(1, 0);
+    teleport(state, 0, spot);
+    playBat(state, giveBat(state, 0, 'snare'));
+    teleport(state, 0, cellId(2, 0));
+    moveTo(state, spot);
+    expect(state.players[0].movesLeft).toBe(2);
+    expect(trapAt(state, spot)?.owner).toBe(0);
+  });
+
+  it('強襲: 通り抜けたマスにいる相手をスタンさせ、次の手番を奪う', () => {
+    const state = newGame(2);
+    const via = cellId(1, 0);
+    teleport(state, 0, VILLAGE);
+    teleport(state, 1, via);
+    playBat(state, giveBat(state, 0, 'rush'));
+    moveTo(state, via);
+    expect(state.players[1].stunned).toBe(true);
+
+    endTurn(state);
+    // 痺れている側の手番は移動力0で始まる
+    expect(currentPlayer(state).index).toBe(1);
+    expect(currentPlayer(state).movesLeft).toBe(0);
+    expect(currentPlayer(state).stunned).toBe(false);
+    expect(legalMoves(state)).toHaveLength(0);
+  });
+
+  it('強襲: 構えを取った時点で、同じマスの相手はその場で止まる', () => {
+    const state = newGame(2);
+    const spot = cellId(1, 0);
+    teleport(state, 0, spot);
+    teleport(state, 1, spot);
+    playBat(state, giveBat(state, 0, 'rush'));
+    expect(state.players[1].stunned).toBe(true);
+  });
+
+  it('蝙蝠傘: 陽光を1回だけ肩代わりし、血も位置も残る', () => {
+    const state = newGame(2);
+    const spot = cellId(1, 0);
+    teleport(state, 0, spot);
+    playBat(state, giveBat(state, 0, 'parasol'));
+    expect(state.players[0].parasol).toBe(true);
+    state.players[0].carrying = 50;
+
+    for (let i = 0; i < 12 && state.night === 1; i++) passRound(state);
+    expect(state.night).toBeGreaterThan(1);
+    // 焼かれずにその場へ残っている
     expect(state.players[0].at).toBe(spot);
-    expect(state.players[0].carrying).toBe(2);
+    expect(state.players[0].carrying).toBe(50);
     expect(state.players[0].deaths).toBe(0);
-    expect(state.players[0].shroudedCell).toBeNull();
-    // 次の夜はもう守ってくれない
-    expect(isSafeCell(state, state.players[0], spot)).toBe(false);
+    // 傘は夜を越せない
+    expect(state.players[0].parasol).toBe(false);
   });
 
-  it('飛翔: 空いている避難所へワープし、移動を終える', () => {
+  it('蝙蝠傘: ハンターも1回だけ肩代わりする', () => {
     const state = newGame(2);
-    const uid = giveBat(state, 0, 'flight');
-    const occupied = new Set(hunterCells(state));
-    const dest = state.board.refugeCells.find((id) => !occupied.has(id))!;
-    playBat(state, uid, { cell: dest });
-    expect(state.players[0].at).toBe(dest);
+    playBat(state, giveBat(state, 0, 'parasol'));
+    const hunterCell = hunterCells(state)[0];
+    teleport(state, 0, state.board.cells[hunterCell].neighbors[0]);
+    state.players[0].carrying = 30;
+    moveTo(state, hunterCell);
+    expect(state.players[0].deaths).toBe(0);
+    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[0].parasol).toBe(false);
+    // 肩代わりした瞬間に足は止まる
     expect(state.players[0].movesLeft).toBe(0);
-    expect(state.players[0].deaths).toBe(0);
   });
 
-  it('飛翔: ハンターの真上に降りれば死ぬ（深部のテントは巡回路の上にある）', () => {
+  it('蝙蝠傘: 二重には差せない', () => {
     const state = newGame(2);
-    const uid = giveBat(state, 0, 'flight');
-    // テントはリング2 ＝ ハンターの巡回リング。いずれ必ず重なる
-    const trap = state.board.shadeCells.find((id) => state.board.cells[id].ring === 2)!;
-    state.hunters[0].sector = state.board.cells[trap].sector;
-    expect(hunterCells(state)).toContain(trap);
-    state.players[0].carrying = 2;
-    playBat(state, uid, { cell: trap });
-    expect(state.players[0].at).toBe(state.board.castleCells[0]);
-    expect(state.players[0].carrying).toBe(0);
-    expect(state.players[0].deaths).toBe(1);
+    playBat(state, giveBat(state, 0, 'parasol'));
+    expect(batPlayError(state, 'parasol')).not.toBeNull();
+  });
+
+  it('影渡り: 城の外にいる相手と位置を入れ替える', () => {
+    const state = newGame(2);
+    const mine = cellId(1, 0);
+    const theirs = cellId(3, 4);
+    teleport(state, 0, mine);
+    teleport(state, 1, theirs);
+    playBat(state, giveBat(state, 0, 'swap'), { player: 1 });
+    expect(state.players[0].at).toBe(theirs);
+    expect(state.players[1].at).toBe(mine);
+    expect(state.players[0].movesLeft).toBe(0);
   });
 
   it('1ターンに使えるコウモリは2枚まで', () => {
     const state = newGame(2);
-    const a = giveBat(state, 0, 'dash');
-    const b = giveBat(state, 0, 'dash');
-    const c = giveBat(state, 0, 'dash');
+    teleport(state, 0, cellId(1, 0));
+    const a = giveBat(state, 0, 'parasol');
+    const b = giveBat(state, 0, 'snare');
+    const c = giveBat(state, 0, 'rush');
     expect(playBat(state, a)).toBe(true);
     expect(playBat(state, b)).toBe(true);
     expect(playBat(state, c)).toBe(false);
@@ -500,19 +614,30 @@ describe('コウモリの効果', () => {
 
   it('使ったコウモリは捨札に行く', () => {
     const state = newGame(2);
-    const uid = giveBat(state, 0, 'dash');
-    playBat(state, uid);
+    playBat(state, giveBat(state, 0, 'parasol'));
     expect(state.discard).toHaveLength(1);
     expect(state.players[0].bats).toHaveLength(0);
   });
 
   it('死んでも手札のコウモリは失わない', () => {
     const state = newGame(2);
-    giveBat(state, 0, 'dash');
+    giveBat(state, 0, 'rush');
     const hunterCell = hunterCells(state)[0];
     teleport(state, 0, state.board.cells[hunterCell].neighbors[0]);
     moveTo(state, hunterCell);
+    expect(state.players[0].deaths).toBe(1);
     expect(state.players[0].bats).toHaveLength(1);
+  });
+
+  it('手札は3枚まで。いっぱいなら洞窟を通っても拾えない', () => {
+    const state = newGame(2);
+    giveBat(state, 0, 'rush');
+    giveBat(state, 0, 'rush');
+    giveBat(state, 0, 'rush');
+    const cave = state.board.caveCells[0];
+    teleport(state, 0, state.board.cells[cave].neighbors[0]);
+    moveTo(state, cave);
+    expect(state.players[0].bats).toHaveLength(3);
   });
 });
 
@@ -676,17 +801,17 @@ describe('噛みつき（PVP）', () => {
 });
 
 describe('仕留めた相手の血（PVP）', () => {
-  it('誘導でハンターに轢かせると、その血は差し向けた側に入る', () => {
+  it('影渡りでハンターの前へ突き出すと、その血は突き出した側に入る', () => {
     const state = newGame(2);
-    const uid = giveBat(state, 0, 'lure');
-    const hunter = state.hunters[0];
-    const victimCell = cellId(hunter.ring, (hunter.sector + 1) % 8);
-    teleport(state, 1, victimCell);
-    state.players[1].carrying = 3;
+    const uid = giveBat(state, 0, 'swap');
+    const hunterCell = hunterCells(state)[0];
+    teleport(state, 0, hunterCell);
+    teleport(state, 1, cellId(1, 0));
+    state.players[1].carrying = 30;
     const poolBefore = state.bloodPool;
-    playBat(state, uid, { hunter: hunter.id, dir: 1 });
+    playBat(state, uid, { player: 1 });
     expect(state.players[1].carrying).toBe(0);
-    expect(state.players[0].carrying).toBe(3);
+    expect(state.players[0].carrying).toBe(30);
     expect(state.players[0].kills).toBe(1);
     expect(state.bloodPool).toBe(poolBefore);
   });
@@ -764,10 +889,14 @@ describe('影渡り（PVP）', () => {
 });
 
 describe('コウモリの構成', () => {
-  it('干渉カードが山札の半分を占める', () => {
-    const pvp = BAT_SPECS.lure.copies + BAT_SPECS.steal.copies + BAT_SPECS.swap.copies;
-    const total = Object.values(BAT_SPECS).reduce((sum, spec) => sum + spec.copies, 0);
-    expect(pvp / total).toBeGreaterThanOrEqual(0.5);
+  it('自己強化の札は1枚も無い ―― すべて締め出しに関わる', () => {
+    const kinds = Object.keys(BAT_SPECS).sort();
+    expect(kinds).toEqual(['parasol', 'rush', 'snare', 'swap']);
+  });
+
+  it('締め出す側の札が、受ける側の札より多い', () => {
+    const offense = BAT_SPECS.snare.copies + BAT_SPECS.rush.copies + BAT_SPECS.swap.copies;
+    expect(offense).toBeGreaterThan(BAT_SPECS.parasol.copies);
   });
 });
 

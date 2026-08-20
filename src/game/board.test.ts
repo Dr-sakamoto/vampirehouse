@@ -77,34 +77,56 @@ describe('盤面の構造', () => {
     }
   });
 
-  it('日陰（テント）は4マス。リング2の南北とリング3の東西', () => {
+  it('テントはリング2の対角2マスだけ', () => {
     const board = createBoard();
-    expect(SHADE_COUNT).toBe(4);
+    expect(SHADE_COUNT).toBe(2);
     expect(board.shadeCells).toHaveLength(SHADE_COUNT);
-    // リング2の2マスはハンターの巡回リング上にあり、常に使えるとは限らない
-    const rings = board.shadeCells.map((id) => board.cells[id].ring).sort();
-    expect(rings).toEqual([2, 2, 3, 3]);
-    // 同じリングの2マスは盤面の反対側同士。片方が塞がれても、もう片方は遠い
-    for (const ring of [2, 3]) {
-      const sectors = board.shadeCells
-        .filter((id) => board.cells[id].ring === ring)
-        .map((id) => board.cells[id].sector)
-        .sort();
-      expect(Math.abs(sectors[0] - sectors[1])).toBe(SECTORS / 2);
-    }
+    // どちらもハンターの巡回リング（リング2）の上にある ―― 命綱と死の罠が同じマス
+    expect(board.shadeCells.map((id) => board.cells[id].ring)).toEqual([2, 2]);
+    // 盤面の反対側同士
+    const sectors = board.shadeCells.map((id) => board.cells[id].sector).sort();
+    expect(Math.abs(sectors[0] - sectors[1])).toBe(SECTORS / 2);
   });
 
-  it('避難所はテント4＋洞窟2の6マス。うち4マスは盤の内側に残る', () => {
+  it('テントの間隔はハンター2体の間隔と同じ ―― 8ラウンドに2回、同時に塞がる', () => {
+    const board = createBoard();
+    const [a, b] = board.shadeCells.map((id) => board.cells[id].sector);
+    // ハンターは常に SECTORS/2 離れて同じ向きに回る（rules.ts の initialHunters）
+    const hunterGap = SECTORS / 2;
+    expect(Math.abs(a - b)).toBe(hunterGap);
+
+    // 実際に一周させて、両方同時に踏まれるラウンドを数える
+    let both = 0;
+    for (let t = 0; t < SECTORS; t++) {
+      const cells = [1, 5].map((start) => `r2s${(start + t) % SECTORS}`);
+      if (board.shadeCells.every((id) => cells.includes(id))) both++;
+    }
+    expect(both).toBe(2);
+  });
+
+  it('避難所はテント2＋洞窟2の4マス。村から間に合うのはテントだけ', () => {
     const board = createBoard();
     expect(board.refugeCells).toHaveLength(CAVE_COUNT + SHADE_COUNT);
-    expect(board.refugeCells).toHaveLength(6);
+    expect(board.refugeCells).toHaveLength(4);
     expect(board.refugeCells).toEqual(
       expect.arrayContaining([...board.caveCells, ...board.shadeCells]),
     );
-    // 洞窟は最外リングへ出したが、内側の椅子（テント）は残す。
-    // 盤の中ほどに避難所が1つも無いと、村で粘った者の逃げ場が城だけになる
+    // 夜明けは1ラウンド前に予告され、移動力は3。村から3歩以内に届くのは
+    // テント2マスだけで、洞窟（4歩）にも城（5歩）にも間に合わない ――
+    // 村で粘った者だけが、2つしかない椅子を奪い合うことになる
+    const reachable = board.refugeCells.filter(
+      (id) => shortestPath(board, VILLAGE, id)!.length - 1 <= 3,
+    );
+    expect(reachable.sort()).toEqual([...board.shadeCells].sort());
+    for (const id of board.caveCells) {
+      expect(shortestPath(board, VILLAGE, id)!.length - 1).toBeGreaterThan(3);
+    }
+    // 城も届かない
+    for (const id of board.castleCells) {
+      expect(shortestPath(board, VILLAGE, id)!.length - 1).toBeGreaterThan(3);
+    }
     const inner = board.refugeCells.filter((id) => board.cells[id].ring < RING_COUNT);
-    expect(inner).toHaveLength(4);
+    expect(inner).toHaveLength(2);
   });
 
   it('洞窟は最外リングの左右2つ。城の直通ルートから1歩ずれている', () => {

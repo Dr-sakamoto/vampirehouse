@@ -36,12 +36,25 @@ export interface Board {
   refugeCells: string[];
 }
 
-/** コウモリ（発展カード）の種類 */
-export type BatKind = 'dash' | 'lure' | 'steal' | 'shroud' | 'flight' | 'swap';
+/**
+ * コウモリ（発展カード）の種類。
+ *
+ * すべて「相手を朝の下に取り残す／自分だけ取り残されない」ための札で、
+ * 自己強化の札は置いていない。夜明けが1ラウンド前に予告されるので、
+ * 干渉はその予告ラウンドに集中する。
+ */
+export type BatKind = 'snare' | 'rush' | 'swap' | 'parasol';
 
 export interface BatCard {
   uid: string;
   kind: BatKind;
+}
+
+/** 盤上に仕掛けられたスタン罠。伏せずに全員へ見える */
+export interface Trap {
+  cell: string;
+  /** 仕掛けた本人は踏んでも作動しない */
+  owner: number;
 }
 
 export interface Hunter {
@@ -69,12 +82,22 @@ export interface Player {
   movesLeft: number;
   /** 今ターンに使用したコウモリの枚数 */
   batsPlayedThisTurn: number;
-  /** 今夜のうち、SHROUD で日陰扱いにしたセルID（夜明けで消滅） */
-  shroudedCell: string | null;
+  /**
+   * スタンを受けた状態。次の手番の移動力が0になる（手番中に受けたときは
+   * その場で移動力を失うので、このフラグは立たない）。
+   */
+  stunned: boolean;
+  /**
+   * 蝙蝠傘を宣言済みか。次の即死（陽光・ハンター）を1回だけ肩代わりして消える。
+   * 使わないまま夜が明ければ、傘ごと失効する。
+   */
+  parasol: boolean;
   /** 今ターンに洞窟を訪れたか（1ターン1枚まで） */
   lootedCaveThisTurn: boolean;
   /** 今ターンに噛みついたか（1ターン1回まで） */
   bitThisTurn: boolean;
+  /** 《強襲》を切ったターンか。通り抜けたマスの相手をスタンさせる */
+  rushing: boolean;
   /** 通算の死亡回数（同点時のタイブレーク・統計用） */
   deaths: number;
   /** 通算で城に持ち帰った血の本数（得点とは別。まとめ持ち帰りボーナスと最終夜ボーナスがあるため） */
@@ -83,6 +106,12 @@ export interface Player {
   stolen: number;
   /** 通算で他プレイヤーを死なせた回数（統計用） */
   kills: number;
+  /** 通算で陽光に焼かれた回数（統計用）。deaths の内訳 */
+  burned: number;
+  /** 通算で避難所（テント・洞窟）で夜明けを迎えた回数（統計用） */
+  sheltered: number;
+  /** 通算でスタンを受けた回数（統計用） */
+  stunsTaken: number;
 }
 
 export type Phase = 'playing' | 'dawn' | 'gameover';
@@ -136,6 +165,17 @@ export interface GameState {
   discard: BatCard[];
   /** 村に残っている血 */
   bloodPool: number;
+  /** 盤上に仕掛けられているスタン罠（夜明けで消える） */
+  traps: Trap[];
+  /**
+   * 夜明けが予告されている＝このラウンドの終わりに必ず朝が来る。
+   *
+   * ダイスは「まだ帰らない」と決めた盤面に対して振られ、当たったら
+   * **1ラウンドの猶予つきで**結果が公開される。賭けの中身が
+   * 「朝が来るか」から「来たとして、そこから1ラウンドで椅子へ届くか」に変わり、
+   * 締め出しが運試しではなく技になる。
+   */
+  dawnPending: boolean;
   /** 1始まりの通算ラウンド数 */
   round: number;
   /** 今夜が始まってから経過したラウンド数（夜明けで0に戻る） */

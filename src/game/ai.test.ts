@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { botTakeTurn } from './ai';
-import { cellId } from './board';
+import { RING_COUNT, cellId } from './board';
 import { createGame, defaultConfig } from './rules';
 import type { GameState } from './types';
 
@@ -100,19 +100,22 @@ describe('ボット同士の対戦', () => {
 });
 
 describe('ボットの判断', () => {
-  it('最終夜の最後のラウンドでは、避難所ではなく城を目指す', () => {
+  it('夜明けが予告された最終夜は、避難所ではなく城を目指す', () => {
     const state = newBotGame(2);
     state.night = state.config.totalNights;
-    state.intoNight = state.config.safeRounds; // 確定の夜は尽きた ＝ 次に朝が来うる
+    state.intoNight = state.config.safeRounds;
+    state.dawnPending = true; // 空が白んだ ―― このラウンドの終わりに必ず朝
     state.current = 0;
 
     const bot = state.players[0];
-    // 避難所（リング3のテント）の隣、かつ城まで2歩のマスに、血を抱えて立たせる
-    const refuge = cellId(3, 2);
-    expect(state.board.cells[refuge].kind).toBe('shade');
-    bot.at = cellId(3, 1);
+    // 避難所（外周の洞窟）と自分の城が、どちらも1歩のマスに血を抱えて立たせる
+    const refuge = cellId(RING_COUNT, 2);
+    expect(state.board.cells[refuge].kind).toBe('cave');
+    bot.at = cellId(RING_COUNT, 1);
+    expect(state.board.cells[bot.at].neighbors).toContain(refuge);
+    expect(state.board.cells[bot.at].neighbors).toContain(state.board.castleCells[0]);
     bot.carrying = 90;
-    bot.movesLeft = 2;
+    bot.movesLeft = 1;
     state.players[1].at = state.board.castleCells[1];
 
     botTakeTurn(state);

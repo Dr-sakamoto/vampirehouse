@@ -8,7 +8,7 @@ import {
   isRefugeKind,
   wrapSector,
 } from './board';
-import { BAT_SPECS, buildDeck } from './bats';
+import { BAT_SPECS, HAND_LIMIT, buildDeck } from './bats';
 import { nextRandom, shuffle } from './rng';
 import type {
   BatKind,
@@ -18,6 +18,7 @@ import type {
   Hunter,
   LogEntry,
   Player,
+  Trap,
   TrailStep,
 } from './types';
 
@@ -84,13 +85,18 @@ export function createGame(config: GameConfig): GameState {
     bats: [],
     movesLeft: 0,
     batsPlayedThisTurn: 0,
-    shroudedCell: null,
     lootedCaveThisTurn: false,
     bitThisTurn: false,
+    rushing: false,
+    stunned: false,
+    parasol: false,
     deaths: 0,
     delivered: 0,
     stolen: 0,
     kills: 0,
+    burned: 0,
+    sheltered: 0,
+    stunsTaken: 0,
   }));
 
   const state: GameState = {
@@ -101,6 +107,8 @@ export function createGame(config: GameConfig): GameState {
     deck: shuffled.items,
     discard: [],
     bloodPool: config.bloodPool,
+    traps: [],
+    dawnPending: false,
     round: 1,
     intoNight: 0,
     night: 1,
@@ -172,13 +180,18 @@ export function hunterNextCell(hunter: Hunter): string {
   return cellId(hunter.ring, wrapSector(hunter.sector + hunter.dir));
 }
 
-/** 夜明けを生き延びられるマスか。洞窟は岩陰が陽を遮るので日陰を兼ねる */
-export function isSafeCell(state: GameState, player: Player, id: string): boolean {
+/**
+ * 夜明けを生き延びられるマスか。洞窟は岩陰が陽を遮るので日陰を兼ねる。
+ *
+ * マスを日陰に変える札（旧《影紡ぎ》）は廃止した。「このマスは今夜だけ日陰」は
+ * 他プレイヤーから見て日陰なのかどうかが分からず、盤面を読めなくする。
+ * 陽光をしのぐ手段は、いま座っている場所か、差した傘（parasol）だけ。
+ */
+export function isSafeCell(state: GameState, _player: Player, id: string): boolean {
   const cell = state.board.cells[id];
   if (!cell) return false;
   if (cell.kind === 'castle') return true;
-  if (isRefugeKind(cell.kind)) return true;
-  return player.shroudedCell === id;
+  return isRefugeKind(cell.kind);
 }
 
 /** 避難所（テント・洞窟）は定員1。他プレイヤーが立っていれば入れない */
@@ -268,22 +281,69 @@ export function safeRoundsLeft(state: GameState): number {
   return Math.max(0, state.config.safeRounds - state.intoNight);
 }
 
-/** このラウンドの終わりに朝が来る確率。安全ラウンドのうちは0 */
+/**
+ * このラウンドの終わりに「夜明けが予告される」確率。安全ラウンドのうちは0。
+ * 既に予告済みなら賭けは終わっているので0を返す（`dawnPending` を見ること）。
+ */
 export function dawnRisk(state: GameState): number {
-  return safeRoundsLeft(state) > 0 ? 0 : state.config.dawnChance;
+  if (state.dawnPending) return 0;
+  // 予告のダイスはラウンドの終わりに振られる。いま進行中のラウンドが
+  // 確定夜の最後の1つなら、その終わりにはもう空が白みうる
+  return safeRoundsLeft(state) > 1 ? 0 : state.config.dawnChance;
+}
+
+/**
+ * このラウンドの終わりに朝が来ることが確定しているか。
+ *
+ * 予告されたラウンドが、この盤面で唯一「全員が同時に椅子へ走る」場面になる。
+ * 締め出しの札（罠・強襲・影渡り）はここで撃ってこそ効く。
+ */
+export function dawnAnnounced(state: GameState): boolean {
+  return state.dawnPending;
+}
+
+/** そのマスに仕掛けられている罠。伏せずに全員へ見えている */
+export function trapAt(state: GameState, id: string): Trap | undefined {
+  return state.traps.find((t) => t.cell === id);
 }
 
 // ---------------------------------------------------------------- ターン進行
 
 export function beginTurn(state: GameState): void {
   const player = currentPlayer(state);
-  player.movesLeft = moveAllowance(state, player);
+  if (player.stunned) {
+    player.movesLeft = 0;
+    player.stunned = false;
+    pushLog(state, `${player.name} は痺れて動けない。`, 'bad');
+  } else {
+    player.movesLeft = moveAllowance(state, player);
+  }
   player.batsPlayedThisTurn = 0;
   player.lootedCaveThisTurn = false;
   player.bitThisTurn = false;
+  player.rushing = false;
+}
+
+/**
+ * スタン ―― 移動力を0にする。相手が手番中なら今の手番、そうでなければ次の手番。
+ *
+ * どちらの場合も奪うのは「1手番ぶんの足」で、効き目は同じ。夜明けが予告された
+ * ラウンドに当てれば、村から2歩のテントにすら届かなくなる ＝ 締め出しになる。
+ * 逆にそれ以外のラウンドでは1手番の遠回りでしかない。
+ * だからスタンの札は予告ラウンドまで温存される ―― ただし手札は3枚しかない。
+ */
+function stun(state: GameState, victim: Player, reason: string): void {
+  victim.stunsTaken += 1;
+  if (victim.index === state.current) {
+    victim.movesLeft = 0;
+  } else {
+    victim.stunned = true;
+  }
+  pushLog(state, `${victim.name} は${reason}、動きを止められた。`, 'bad');
 }
 
 function drawBat(state: GameState, player: Player): boolean {
+  if (player.bats.length >= HAND_LIMIT) return false;
   if (state.deck.length === 0) {
     if (state.discard.length === 0) return false;
     const reshuffled = shuffle(state.discard, state.rngState);
@@ -339,15 +399,23 @@ function transferBlood(thief: Player, victim: Player, amount: number): void {
 
 /**
  * ハンターに触れた／太陽に焼かれたときの共通処理。血は村へ還る。
- * ただし killer が指定されているとき（誘導・影渡りで仕留めたとき）は、
+ * ただし killer が指定されているとき（影渡りで仕留めたとき）は、
  * 抱えていた血がそのまま仕留めた側の懐に入る ―― 盤上で一番大きな逆転手。
+ *
+ * 蝙蝠傘を差していれば、その1回だけを傘が肩代わりする。血も位置もそのまま残り、
+ * 傘だけが消える。戻り値は「本当に死んだか」。
  */
 function killPlayer(
   state: GameState,
   player: Player,
   reason: string,
   killer?: Player,
-): void {
+): boolean {
+  if (player.parasol) {
+    player.parasol = false;
+    pushLog(state, `${player.name} は${reason}が、蝙蝠傘が身代わりになった。`, 'warn');
+    return false;
+  }
   const lost = player.carrying;
   if (killer && killer.index !== player.index && lost > 0) {
     transferBlood(killer, player, lost);
@@ -356,7 +424,7 @@ function killPlayer(
     player.carrying = 0;
   }
   player.deaths += 1;
-  player.shroudedCell = null;
+  player.stunned = false;
   const origin = player.at;
   player.at = castleOf(state.board, player.index);
   player.movesLeft = 0;
@@ -369,6 +437,7 @@ function killPlayer(
         : `血 ${lost} を落とし、`
       : '';
   pushLog(state, `${player.name} は${reason}。${spoils}城へ引き戻された。`, 'bad');
+  return true;
 }
 
 /**
@@ -408,13 +477,38 @@ export function moveTo(state: GameState, target: string): boolean {
   player.movesLeft -= 1;
   pushTrail(state, player.index, origin, target, 'walk');
 
-  // ハンターに触れたら即死
+  // ハンターに触れたら即死（傘があれば1回だけ肩代わりして、その場で足が止まる）
   if (hunterCells(state).includes(target)) {
-    killPlayer(state, player, 'ハンターに討たれた');
+    if (killPlayer(state, player, 'ハンターに討たれた')) return true;
+    player.movesLeft = 0;
+    return true;
+  }
+
+  // 他人の罠を踏んだ。足を止められたうえ、踏み込む前のマスへ弾き返される。
+  //
+  // 「その場で止まる」だけだと罠はほぼ無意味だった。避難所はどれも隣が4マスあり、
+  // 罠を1枚置いても同じ歩数の迂回路が残るので、見えている罠は必ず避けられる
+  // （実測でボット128個の罠が1度も踏まれなかった）。弾き返すなら話が別で、
+  // **罠を置いた椅子そのものが目的地として潰れる** ―― 迂回のしようがない。
+  const trap = state.traps.find((t) => t.cell === target && t.owner !== player.index);
+  if (trap) {
+    state.traps = state.traps.filter((t) => t !== trap);
+    player.at = origin;
+    pushTrail(state, player.index, target, origin, 'teleport');
+    stun(state, player, `${state.players[trap.owner].name} の罠に弾かれ`);
     return true;
   }
 
   const cell = state.board.cells[target];
+
+  // 《強襲》を切っていれば、通り抜けたマスにいる相手を全員止める
+  if (player.rushing) {
+    for (const p of state.players) {
+      if (p.index !== player.index && p.at === target) {
+        stun(state, p, `${player.name} に突き飛ばされ`);
+      }
+    }
+  }
 
   // 先客がいれば噛みつく（1ターン1回）
   bite(state, player, target);
@@ -466,26 +560,34 @@ function endRound(state: GameState): void {
   moveHunters(state);
 
   state.intoNight += 1;
-  // 最初の safeRounds ラウンドは必ず夜が続く。それを越えてから毎ラウンドの賭けになる
-  const dawnNow =
-    state.intoNight > state.config.safeRounds &&
-    roll(state, 10_000) / 10_000 < state.config.dawnChance;
+
+  // 予告されていたラウンドが終わった ―― 朝が来る
+  const dawnNow = state.dawnPending;
   if (dawnNow) {
     resolveDawn(state);
     if (state.phase === 'gameover') return;
+  } else if (
+    // 最初の safeRounds ラウンドは必ず夜が続く。それを越えてから毎ラウンドの賭けになる。
+    // 当たっても即座に朝にはせず、1ラウンドの猶予つきで予告する
+    state.intoNight >= state.config.safeRounds &&
+    roll(state, 10_000) / 10_000 < state.config.dawnChance
+  ) {
+    state.dawnPending = true;
   }
 
   if (checkBloodExhausted(state)) return;
 
   state.round += 1;
   state.current = state.startPlayer;
-  if (!dawnNow) {
+  if (state.dawnPending) {
+    pushLog(state, '東の空が白んだ ―― このラウンドの終わりに朝が来る。', 'warn');
+  } else if (!dawnNow) {
     const safe = safeRoundsLeft(state);
     pushLog(
       state,
       safe > 0
-        ? `あと ${safe} ラウンドは朝が来ない。`
-        : `いつ朝が来てもおかしくない（毎ラウンド ${Math.round(state.config.dawnChance * 100)}%）。`,
+        ? `あと ${safe} ラウンドは朝の兆しも出ない。`
+        : `いつ空が白んでもおかしくない（毎ラウンド ${Math.round(state.config.dawnChance * 100)}%）。`,
       'warn',
     );
   }
@@ -509,16 +611,21 @@ function resolveDawn(state: GameState): void {
 
   for (const p of state.players) {
     if (isSafeCell(state, p, p.at)) {
-      const where = state.board.cells[p.at].kind === 'castle' ? '城' : '日陰';
-      pushLog(state, `${p.name} は${where}で朝をやり過ごした。`, 'good');
-    } else {
+      const inRefuge = state.board.cells[p.at].kind !== 'castle';
+      if (inRefuge) p.sheltered += 1;
+      pushLog(state, `${p.name} は${inRefuge ? '日陰' : '城'}で朝をやり過ごした。`, 'good');
+    } else if (killPlayer(state, p, '陽光に焼かれた')) {
+      p.burned += 1;
       state.lastBurned.push(p.index);
-      killPlayer(state, p, '陽光に焼かれた');
     }
-    p.shroudedCell = null;
+    // 傘は夜を越せない。罠も朝日で焼け落ちる
+    p.parasol = false;
+    p.stunned = false;
   }
 
+  state.traps = [];
   state.intoNight = 0;
+  state.dawnPending = false;
 
   if (state.night >= state.config.totalNights) {
     finishGame(state, '規定の夜数が終わった');
@@ -565,14 +672,8 @@ export function winnerIndices(state: GameState): number[] {
 // ---------------------------------------------------------------- コウモリ
 
 export interface BatTarget {
-  /** steal / swap: 対象プレイヤーの index */
+  /** swap: 入れ替わる相手の index */
   player?: number;
-  /** lure: 動かすハンターの id */
-  hunter?: string;
-  /** lure: 動かす向き */
-  dir?: 1 | -1;
-  /** flight: 行き先の日陰マス */
-  cell?: string;
 }
 
 /** そのカードを今この瞬間に使えるか（使えない理由を返す） */
@@ -583,37 +684,21 @@ export function batPlayError(state: GameState, kind: BatKind): string | null {
     return `1ターンに使えるのは ${state.config.batsPerTurn} 枚まで`;
   }
   switch (kind) {
-    case 'steal':
-      return stealTargets(state).length > 0 ? null : '奪える相手がいない';
-    case 'flight':
-      return flightTargets(state).length > 0 ? null : '空いている避難所がない';
+    case 'snare': {
+      const kindHere = state.board.cells[player.at].kind;
+      // 村と城には仕掛けられない。全員が必ず立ち寄る収穫地と、各自の聖域は狩り場にしない。
+      // 避難所には置ける ―― 座っている椅子に罠を張って「ここは俺のだ」と主張できる
+      if (kindHere === 'village' || kindHere === 'castle') return 'ここには仕掛けられない';
+      return trapAt(state, player.at) ? 'ここには既に罠がある' : null;
+    }
+    case 'rush':
+      return player.rushing ? 'もう強襲している' : null;
+    case 'parasol':
+      return player.parasol ? 'もう傘を差している' : null;
     case 'swap':
       if (state.board.cells[player.at].kind === 'castle') return '城の中からは使えない';
       return swapTargets(state).length > 0 ? null : '入れ替われる相手がいない';
-    case 'shroud':
-      return player.shroudedCell === player.at ? 'このマスは既に影の中' : null;
-    default:
-      return null;
   }
-}
-
-export function stealTargets(state: GameState): number[] {
-  const me = currentPlayer(state);
-  return state.players
-    .filter(
-      (p) =>
-        p.index !== me.index &&
-        p.carrying > 0 &&
-        state.board.cells[p.at].kind !== 'castle',
-    )
-    .map((p) => p.index);
-}
-
-export function flightTargets(state: GameState): string[] {
-  const me = currentPlayer(state);
-  return state.board.refugeCells.filter(
-    (id) => id !== me.at && !state.players.some((p) => p.index !== me.index && p.at === id),
-  );
 }
 
 /** 影渡りの相手。城にいる者とは入れ替われない（城は各プレイヤーの聖域） */
@@ -636,49 +721,25 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
   const spec = BAT_SPECS[card.kind];
 
   switch (card.kind) {
-    case 'dash': {
-      player.movesLeft += 2;
-      pushLog(state, `${player.name} が《${spec.name}》を使った。移動力 +2。`, 'info');
+    case 'snare': {
+      state.traps.push({ cell: player.at, owner: player.index });
+      pushLog(state, `${player.name} が《${spec.name}》を足元に仕掛けた。`, 'info');
       break;
     }
-    case 'lure': {
-      const hunter = state.hunters.find((h) => h.id === target.hunter) ?? state.hunters[0];
-      const dir = target.dir ?? 1;
-      hunter.sector = wrapSector(hunter.sector + dir);
-      const id = cellId(hunter.ring, hunter.sector);
-      pushLog(state, `${player.name} が《${spec.name}》でハンターを動かした。`, 'info');
+    case 'rush': {
+      player.rushing = true;
+      // 既に相乗りしている相手も、踏み込み直すまでもなくその場で吹き飛ばす
       for (const p of state.players) {
-        if (p.at === id) killPlayer(state, p, 'ハンターを差し向けられた', player);
+        if (p.index !== player.index && p.at === player.at) {
+          stun(state, p, `${player.name} に突き飛ばされ`);
+        }
       }
+      pushLog(state, `${player.name} が《${spec.name}》の構えを取った。`, 'info');
       break;
     }
-    case 'steal': {
-      const targets = stealTargets(state);
-      const victimIndex = target.player !== undefined && targets.includes(target.player)
-        ? target.player
-        : targets[0];
-      const victim = state.players[victimIndex];
-      const taken = biteAmount(victim.carrying);
-      transferBlood(player, victim, taken);
-      pushLog(state, `${player.name} が《${spec.name}》で ${victim.name} の血 ${taken} を奪った。`, 'bad');
-      break;
-    }
-    case 'shroud': {
-      player.shroudedCell = player.at;
-      pushLog(state, `${player.name} が《${spec.name}》で足元を影に沈めた。`, 'info');
-      break;
-    }
-    case 'flight': {
-      const options = flightTargets(state);
-      const dest = target.cell && options.includes(target.cell) ? target.cell : options[0];
-      const origin = player.at;
-      player.at = dest;
-      player.movesLeft = 0;
-      pushTrail(state, player.index, origin, dest, 'teleport');
-      pushLog(state, `${player.name} が《${spec.name}》で避難所へ舞い降りた。`, 'info');
-      if (hunterCells(state).includes(dest)) {
-        killPlayer(state, player, 'ハンターの真上に降りてしまった');
-      }
+    case 'parasol': {
+      player.parasol = true;
+      pushLog(state, `${player.name} が《${spec.name}》を差した。`, 'info');
       break;
     }
     case 'swap': {
@@ -695,10 +756,6 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
       player.movesLeft = 0;
       pushTrail(state, player.index, mine, theirs, 'teleport');
       pushTrail(state, victim.index, theirs, mine, 'teleport');
-      // 影を渡った先が自分の影だったなら、その加護は置いてきたことになる
-      if (player.shroudedCell !== null && player.shroudedCell !== player.at) {
-        player.shroudedCell = null;
-      }
       pushLog(
         state,
         `${player.name} が《${spec.name}》で ${victim.name} と位置を入れ替えた。`,

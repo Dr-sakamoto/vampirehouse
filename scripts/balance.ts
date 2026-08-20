@@ -27,8 +27,13 @@ function measure(playerCount: number, tweak?: (c: GameConfig) => void) {
   const kills: number[] = [];
   const rounds: number[] = [];
   const hauls: number[] = [];
+  const burned: number[] = [];
+  const stuns: number[] = [];
   let shutout = 0;
   let seats = 0;
+  // 夜明けを迎えた回数のうち、避難所（テント・洞窟）で迎えた割合
+  let dawnsMet = 0;
+  let dawnsInRefuge = 0;
 
   for (let seed = 1; seed <= GAMES; seed++) {
     const s = run(playerCount, seed, tweak);
@@ -44,6 +49,12 @@ function measure(playerCount: number, tweak?: (c: GameConfig) => void) {
     kills.push(s.players.reduce((a, p) => a + p.kills, 0));
     leftover.push(s.bloodPool);
     rounds.push(s.round);
+    burned.push(s.players.reduce((a, p) => a + p.burned, 0));
+    stuns.push(s.players.reduce((a, p) => a + p.stunsTaken, 0));
+    for (const p of s.players) {
+      dawnsMet += p.sheltered + p.burned;
+      dawnsInRefuge += p.sheltered;
+    }
     for (const e of s.log) {
       const m = e.text.match(/血 (\d+) を持ち帰った/);
       if (m) hauls.push(Number(m[1]));
@@ -61,6 +72,9 @@ function measure(playerCount: number, tweak?: (c: GameConfig) => void) {
     margin: avg(margins),
     stolen: avg(stolen),
     kills: avg(kills),
+    burned: avg(burned),
+    stuns: avg(stuns),
+    refuge: dawnsInRefuge / (dawnsMet || 1),
     leftover: avg(leftover),
     rounds: avg(rounds),
     haul: avg(hauls),
@@ -73,7 +87,8 @@ for (const playerCount of [2, 3, 4]) {
   const m = measure(playerCount);
   console.log(
     `${m.playerCount}人:  平均得点 ${f(m.avg)}  勝者 ${f(m.winner)}  最高 ${m.top}  最低 ${m.low}` +
-      `  無得点率 ${f(m.shutout * 100, 0)}%  死亡 ${f(m.deaths)}` +
+      `  無得点率 ${f(m.shutout * 100, 0)}%  死亡 ${f(m.deaths)}  焼死 ${f(m.burned)}` +
+      `  日陰率 ${f(m.refuge * 100, 0)}%  スタン ${f(m.stuns)}` +
       `  奪った血 ${f(m.stolen)}  仕留め ${f(m.kills)}` +
       `  勝差 ${f(m.margin)}  村の残り血 ${f(m.leftover)}` +
       `  全${f(m.rounds, 1)}R  1回の持ち帰り ${f(m.haul, 0)}  100以上 ${f(m.bigHaul * 100, 0)}%`,
