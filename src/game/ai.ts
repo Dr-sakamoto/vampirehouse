@@ -21,8 +21,11 @@ import {
 } from './rules';
 import type { BatKind, GameState, Player } from './types';
 
-/** 欲張りの上限。これ以上は抱え込まない */
-const GREED_CAP = 3;
+/**
+ * 欲張りの上限。これ以上抱えたら、次の一口より持ち帰りを優先する。
+ * 血が点そのものになったので、単位も点（＝村の一口の平均のおよそ3回ぶん）。
+ */
+const GREED_CAP = 120;
 
 function findBat(player: Player, kind: BatKind): string | null {
   return player.bats.find((b) => b.kind === kind)?.uid ?? null;

@@ -111,7 +111,7 @@ export interface GameConfig {
   bots: boolean[];
   /** 毎ターンの移動力。血を抱えていても変わらない */
   baseMove: number;
-  /** 村でターンを終えたときに吸える血の目。この中から1つ出る */
+  /** 村でターンを終えたときに吸える血の目。この中から1つ出る。血がそのまま点 */
   suckFaces: number[];
   /** 夜が必ず続くラウンド数。ここまでは朝が来ない */
   safeRounds: number;
@@ -121,8 +121,6 @@ export interface GameConfig {
   totalNights: number;
   /** 村の血の総量 */
   bloodPool: number;
-  /** 城に持ち帰った血1つぶんの基礎得点 */
-  bloodValue: number;
   /** 1ターンに使えるコウモリの最大枚数 */
   batsPerTurn: number;
   /** 乱数シード（デッキのシャッフル用。同じシード＝同じ配札） */

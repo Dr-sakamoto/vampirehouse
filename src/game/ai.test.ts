@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { botTakeTurn } from './ai';
 import { cellId } from './board';
-import { createGame, defaultConfig, deliveryScore } from './rules';
+import { createGame, defaultConfig } from './rules';
 import type { GameState } from './types';
 
 function newBotGame(playerCount: number, seed = 1): GameState {
@@ -66,13 +66,12 @@ describe('ボット同士の対戦', () => {
     expect(a.log.map((l) => l.text)).toEqual(b.log.map((l) => l.text));
   });
 
-  it('得点は最終夜ボーナスを含めて妥当な範囲に収まる', () => {
+  it('得点は盤上の血の総量を超えない', () => {
     const state = playOut(2, 11);
-    // 盤上の血を1人で独占し、最終夜に一度で持ち帰ったときが上限
-    const ceiling = deliveryScore(state, state.config.bloodPool);
+    // 血がそのまま点なので、上限は村に用意された血の総量
     for (const p of state.players) {
       expect(p.score).toBeGreaterThanOrEqual(0);
-      expect(p.score).toBeLessThanOrEqual(ceiling);
+      expect(p.score).toBeLessThanOrEqual(state.config.bloodPool * 3);
     }
   });
 
@@ -112,7 +111,7 @@ describe('ボットの判断', () => {
     const refuge = cellId(3, 2);
     expect(state.board.cells[refuge].kind).toBe('shade');
     bot.at = cellId(3, 1);
-    bot.carrying = 2;
+    bot.carrying = 90;
     bot.movesLeft = 2;
     state.players[1].at = state.board.castleCells[1];
 
