@@ -5,7 +5,7 @@ import {
   legalMoves,
   dawnRisk,
 } from '../game/rules';
-import type { GameState } from '../game/types';
+import type { Cell, GameState } from '../game/types';
 import {
   CASTLE_RING,
   CENTER,
@@ -41,11 +41,13 @@ export interface BoardViewOptions {
 export class BoardView {
   readonly svg: SVGSVGElement;
   private readonly boardLayer = el('g', { class: 'layer-board' });
+  private readonly glowLayer = el('g', { class: 'layer-glow' });
   private readonly stateLayer = el('g', { class: 'layer-state' });
   private readonly ghostLayer = el('g', { class: 'layer-ghosts' });
   private readonly markerLayer = el('g', { class: 'layer-markers' });
   private readonly pieceLayer = el('g', { class: 'layer-pieces' });
   private readonly stateNodes = new Map<string, SVGCircleElement>();
+  private readonly glowNodes = new Map<string, SVGGraphicsElement>();
   private built = false;
 
   constructor(private readonly options: BoardViewOptions) {
@@ -55,7 +57,37 @@ export class BoardView {
       role: 'img',
       'aria-label': 'ヴァンパイア・ハウスの盤面',
     });
-    this.svg.append(this.boardLayer, this.stateLayer, this.ghostLayer, this.markerLayer, this.pieceLayer);
+    this.svg.append(
+      this.boardLayer,
+      this.glowLayer,
+      this.stateLayer,
+      this.ghostLayer,
+      this.markerLayer,
+      this.pieceLayer,
+    );
+  }
+
+  /**
+   * マスの実形（扇形・村の円・城の四角）をそのままなぞる、状態表示専用の図形。
+   * クリック判定は透明な当たり判定円（stateLayer）が別に持つ ―― この図形は
+   * pointer-events: none で見た目だけを担当する。
+   */
+  private buildCellShape(cell: Cell): SVGGraphicsElement {
+    if (cell.ring === 0) {
+      return el('circle', { cx: CENTER.x, cy: CENTER.y, r: 58 });
+    }
+    if (cell.ring === CASTLE_RING) {
+      const c = cellCenter(cell);
+      return el('rect', {
+        x: c.x - 30,
+        y: c.y - 30,
+        width: 60,
+        height: 60,
+        rx: 8,
+        transform: `rotate(45 ${c.x} ${c.y})`,
+      });
+    }
+    return el('path', { d: ringSectorPath(cell.ring, cell.sector) });
   }
 
   /**
@@ -128,6 +160,12 @@ export class BoardView {
     for (const id of board.order) {
       const cell = board.cells[id];
       const c = cellCenter(cell);
+
+      const glow = this.buildCellShape(cell);
+      glow.setAttribute('class', 'cell-glow');
+      this.glowLayer.append(glow);
+      this.glowNodes.set(id, glow);
+
       const node = el('circle', { cx: c.x, cy: c.y, r: cellHitRadius(cell) });
       node.setAttribute('class', 'state');
       node.dataset.cell = id;
@@ -152,8 +190,6 @@ export class BoardView {
 
     for (const [id, node] of this.stateNodes) {
       const cell = state.board.cells[id];
-      node.classList.toggle('is-legal', legal.has(id));
-      node.classList.toggle('is-target', targets.has(id));
       node.classList.toggle('is-danger', hunterSoon.has(id));
       node.classList.toggle('is-hunter', hunterNow.has(id));
       node.classList.toggle('is-shroud', me.shroudedCell === id);
@@ -163,6 +199,12 @@ export class BoardView {
         cell.kind === 'castle' && cell.castleOf !== undefined && cell.castleOf !== me.index,
       );
       node.classList.toggle('is-clickable', legal.has(id) || targets.has(id));
+    }
+
+    // 移動できるマスは、丸いチェッカーではなくマス目自体を微発光させて示す
+    for (const [id, glow] of this.glowNodes) {
+      glow.classList.toggle('is-legal', legal.has(id));
+      glow.classList.toggle('is-target', targets.has(id));
     }
 
     this.renderMarkers(state);

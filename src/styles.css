@@ -224,26 +224,32 @@ button.ghost { background: transparent; }
 
 .state.is-shroud { fill: #6b4fd8; fill-opacity: 0.4; }
 
-/* 進める先。盤面図形の上から白く光らせるだけ */
-.state.is-legal {
-  stroke: #1c1a24;
-  stroke-width: 6;
+/* 進める先。丸いチェッカーは置かず、マス目の実形（扇形・円・四角）そのものを
+   ふわっと光らせるだけ。当たり判定は .state 側の透明円が別に持つ */
+.layer-glow { pointer-events: none; }
+.cell-glow { fill: none; stroke: none; }
+
+.cell-glow.is-legal {
   fill: #ffffff;
-  fill-opacity: 0.38;
-  animation: pulse 1.7s ease-in-out infinite;
+  fill-opacity: 0.16;
+  stroke: #ffffff;
+  stroke-width: 2.5;
+  stroke-opacity: 0.55;
+  animation: glow 1.7s ease-in-out infinite;
 }
-.state.is-legal:hover { fill-opacity: 0.68; }
 
-.state.is-target {
-  stroke: #6b4fd8;
-  stroke-width: 6;
+.cell-glow.is-target {
   fill: #b39dff;
-  fill-opacity: 0.5;
+  fill-opacity: 0.28;
+  stroke: #6b4fd8;
+  stroke-width: 2.5;
+  stroke-opacity: 0.7;
+  animation: glow 1.7s ease-in-out infinite;
 }
 
-@keyframes pulse {
-  0%, 100% { stroke-opacity: 0.45; }
-  50% { stroke-opacity: 1; }
+@keyframes glow {
+  0%, 100% { fill-opacity: 0.14; stroke-opacity: 0.4; }
+  50% { fill-opacity: 0.3; stroke-opacity: 0.85; }
 }
 
 /* --- ハンター。写真の金の三角と同じ色調の、動く駒 --- */
