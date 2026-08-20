@@ -1,4 +1,4 @@
-import { VILLAGE, cellId, isRefugeKind } from './board';
+import { VILLAGE, cellId } from './board';
 import { HAND_LIMIT } from './bats';
 import {
   batPlayError,
@@ -59,7 +59,7 @@ function foreignCastles(state: GameState, me: Player): Set<string> {
 function blockedCells(state: GameState, me: Player): Set<string> {
   const set = foreignCastles(state, me);
   for (const p of state.players) {
-    if (p.index !== me.index && isRefugeKind(state.board.cells[p.at].kind)) set.add(p.at);
+    if (p.index !== me.index && state.board.cells[p.at].kind === 'shade') set.add(p.at);
   }
   for (const t of state.traps) {
     if (t.owner !== me.index) set.add(t.cell);

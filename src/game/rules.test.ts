@@ -105,15 +105,22 @@ describe('移動', () => {
     expect(p0.at).not.toBe(enemyCastle);
   });
 
-  it('避難所（テント・洞窟）は定員1。埋まっていると入れない', () => {
-    for (const refuge of [state.board.shadeCells[0], state.board.caveCells[0]]) {
-      const neighbor = state.board.cells[refuge].neighbors[0];
-      teleport(state, 1, refuge);
-      teleport(state, 0, neighbor);
-      expect(legalMoves(state)).not.toContain(refuge);
-      teleport(state, 1, state.board.castleCells[1]);
-      expect(legalMoves(state)).toContain(refuge);
-    }
+  it('テントは定員1。埋まっていると入れない', () => {
+    const refuge = state.board.shadeCells[0];
+    const neighbor = state.board.cells[refuge].neighbors[0];
+    teleport(state, 1, refuge);
+    teleport(state, 0, neighbor);
+    expect(legalMoves(state)).not.toContain(refuge);
+    teleport(state, 1, state.board.castleCells[1]);
+    expect(legalMoves(state)).toContain(refuge);
+  });
+
+  it('洞窟は定員なし。他プレイヤーが居ても入れる', () => {
+    const cave = state.board.caveCells[0];
+    const neighbor = state.board.cells[cave].neighbors[0];
+    teleport(state, 1, cave);
+    teleport(state, 0, neighbor);
+    expect(legalMoves(state)).toContain(cave);
   });
 });
 
@@ -442,7 +449,7 @@ describe('洞窟とコウモリ', () => {
     const gate = state.board.cells[cave].neighbors[0];
     teleport(state, 0, gate);
     moveTo(state, cave);
-    moveTo(state, gate); // 洞窟は定員1人なので出ておく
+    moveTo(state, gate); // 洞窟を出て次ターンの入り直しに備える
     endTurn(state);
     teleport(state, 1, gate);
     moveTo(state, cave);
