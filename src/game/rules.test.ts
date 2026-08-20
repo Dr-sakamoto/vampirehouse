@@ -525,30 +525,47 @@ describe('コウモリの効果', () => {
     expect(trapAt(state, spot)?.owner).toBe(0);
   });
 
-  it('強襲: 通り抜けたマスにいる相手をスタンさせ、次の手番を奪う', () => {
+  it('強襲: 通り抜けたマスにいる相手を仕留め、その血を奪う', () => {
     const state = newGame(2);
     const via = cellId(1, 0);
     teleport(state, 0, VILLAGE);
     teleport(state, 1, via);
+    state.players[1].carrying = 80;
+    const poolBefore = state.bloodPool;
     playBat(state, giveBat(state, 0, 'rush'));
     moveTo(state, via);
-    expect(state.players[1].stunned).toBe(true);
 
-    endTurn(state);
-    // 痺れている側の手番は移動力0で始まる
-    expect(currentPlayer(state).index).toBe(1);
-    expect(currentPlayer(state).movesLeft).toBe(0);
-    expect(currentPlayer(state).stunned).toBe(false);
-    expect(legalMoves(state)).toHaveLength(0);
+    expect(state.players[1].deaths).toBe(1);
+    expect(state.players[1].carrying).toBe(0);
+    expect(state.players[1].at).toBe(state.board.castleCells[1]);
+    // 血は村へ還らず、襲った側の懐に入る
+    expect(state.players[0].carrying).toBe(80);
+    expect(state.players[0].kills).toBe(1);
+    expect(state.bloodPool).toBe(poolBefore);
   });
 
-  it('強襲: 構えを取った時点で、同じマスの相手はその場で止まる', () => {
+  it('強襲: 構えを取った時点で、同じマスの相手も仕留める', () => {
     const state = newGame(2);
     const spot = cellId(1, 0);
     teleport(state, 0, spot);
     teleport(state, 1, spot);
+    state.players[1].carrying = 30;
     playBat(state, giveBat(state, 0, 'rush'));
-    expect(state.players[1].stunned).toBe(true);
+    expect(state.players[1].deaths).toBe(1);
+    expect(state.players[0].carrying).toBe(30);
+  });
+
+  it('強襲: 蝙蝠傘を差していれば1回だけ凌げる', () => {
+    const state = newGame(2);
+    const spot = cellId(1, 0);
+    teleport(state, 1, spot);
+    state.players[1].carrying = 30;
+    state.players[1].parasol = true;
+    teleport(state, 0, spot);
+    playBat(state, giveBat(state, 0, 'rush'));
+    expect(state.players[1].deaths).toBe(0);
+    expect(state.players[1].carrying).toBe(30);
+    expect(state.players[1].parasol).toBe(false);
   });
 
   it('蝙蝠傘: 陽光を1回だけ肩代わりし、血も位置も残る', () => {

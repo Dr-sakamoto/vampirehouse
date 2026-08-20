@@ -29,34 +29,44 @@ export const BAT_SPECS: Record<BatKind, BatSpec> = {
   snare: {
     kind: 'snare',
     name: 'スタン罠',
-    copies: 5,
-    text: '今いるマスに罠を仕掛ける。全員に見える。踏んだ他プレイヤーはスタン（移動力を失う）。夜明けで消える。',
+    copies: 3,
+    text: '今いるマスに罠を仕掛ける。全員に見える。踏んだ他プレイヤーは弾き返され、足が止まる。城の門に張れば迂回路は無い。夜明けで消える。',
     icon: '✳',
   },
   rush: {
     kind: 'rush',
     name: '強襲',
-    copies: 5,
-    text: 'このターン、通り抜けたマスにいる他プレイヤーを全員スタンさせる（移動力を失う）。',
+    copies: 3,
+    text: 'このターン、通り抜けたマスにいる他プレイヤーを仕留める。抱えていた血はすべて自分のものになる。',
     icon: '»',
   },
   swap: {
     kind: 'swap',
     name: '影渡り',
-    copies: 4,
+    copies: 6,
     text: '城の外にいる他プレイヤー1人と位置を入れ替える。移動は終了。避難所を横取りできる。',
     icon: '⇄',
   },
   parasol: {
     kind: 'parasol',
     name: '蝙蝠傘',
-    copies: 4,
+    copies: 6,
     text: '宣言して差す。次の即死（陽光・ハンター）を1回だけ肩代わりして消える。夜が明ければ失効する。',
     icon: '☂',
   },
 };
 
 export const BAT_ORDER: BatKind[] = ['snare', 'rush', 'swap', 'parasol'];
+
+/**
+ * 枚数の根拠（`npm run balance` ボット60戦 × 各人数）。
+ *
+ * 罠と強襲はどちらも決まれば相手の一夜を丸ごと奪う札なので、**濃くすると壊れる**。
+ * 5枚ずつ入れた構成では3人戦の無得点率が 13%、平均得点が 91 まで落ちた
+ * （どちらか片方だけなら 169／119 で健全なので、重ねすぎが原因）。
+ * 3枚ずつに薄め、空いた枠を受け側（影渡り・傘）へ回すと、
+ * 得点 157/130/136・無得点 2〜5% と、干渉を厚くしたまま元の水準へ戻る。
+ */
 
 export function buildDeck(): BatCard[] {
   const deck: BatCard[] = [];
