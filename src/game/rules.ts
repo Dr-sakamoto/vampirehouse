@@ -485,19 +485,16 @@ export function moveTo(state: GameState, target: string): boolean {
     return true;
   }
 
-  // 他人の罠を踏んだ。足を止められたうえ、踏み込む前のマスへ弾き返される。
+  // 他人の罠に掛かった。そのマスに貼り付けられ、この手番の足はそこで終わる。
   //
-  // 「その場で止まる」だけだと罠はほぼ無意味だった。避難所はどれも隣が4マスあり、
-  // 罠を1枚置いても同じ歩数の迂回路が残るので、見えている罠は必ず避けられる
-  // （実測でボット128個の罠が1度も踏まれなかった）。弾き返すなら話が別で、
-  // **罠を置いた椅子そのものが目的地として潰れる** ―― 迂回のしようがない。
+  // 弾き返すのではなく吸着させる ―― 規則としては「移動力を失う」だけで済むし、
+  // 罠を踏んだら捕まる、という絵のほうが素直。避難所に張った罠が相手を
+  // 座らせてしまうのは弱点に見えるが、**最終夜は避難所に座っても0点**なので、
+  // 血を抱えたまま椅子に貼り付けられるのはむしろ致命傷になる。
   const trap = state.traps.find((t) => t.cell === target && t.owner !== player.index);
   if (trap) {
     state.traps = state.traps.filter((t) => t !== trap);
-    player.at = origin;
-    pushTrail(state, player.index, target, origin, 'teleport');
-    stun(state, player, `${state.players[trap.owner].name} の罠に弾かれ`);
-    return true;
+    stun(state, player, `${state.players[trap.owner].name} の罠に捕まり`);
   }
 
   const cell = state.board.cells[target];
