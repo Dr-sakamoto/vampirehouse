@@ -595,7 +595,7 @@ describe('血と得点', () => {
     const { min, max } = suckRange(state);
     expect(min).toBe(10);
     expect(max).toBe(100);
-    expect(state.config.suckFaces).toEqual([10, 20, 30, 50, 100]);
+    expect(state.config.suckFaces).toEqual([10, 30, 50, 100]);
   });
 
   it('最終夜は「持ち帰り3倍」ではなく村が3倍濃い（血と点は最後まで同じ数字）', () => {
