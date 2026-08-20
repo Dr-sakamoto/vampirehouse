@@ -87,6 +87,17 @@ export interface Player {
 
 export type Phase = 'playing' | 'dawn' | 'gameover';
 
+/** 駒の移動1回ぶんの記録。盤面側がこれを読んでアニメーションと軌跡を描く */
+export interface TrailStep {
+  /** 単調増加の通し番号。UIが「まだ描いていない分」を判定するのに使う */
+  seq: number;
+  player: number;
+  from: string;
+  to: string;
+  /** walk=歩き（軌跡を引く） / teleport=瞬間移動（誘導・影渡り・死亡での帰還） */
+  kind: 'walk' | 'teleport';
+}
+
 export interface LogEntry {
   round: number;
   night: number;
@@ -143,5 +154,8 @@ export interface GameState {
   log: LogEntry[];
   /** 直近の夜明けで焼かれたプレイヤーindex（演出用） */
   lastBurned: number[];
+  /** 駒移動の記録（演出用）。直近のみ保持する */
+  trail: TrailStep[];
+  trailSeq: number;
   rngState: number;
 }
