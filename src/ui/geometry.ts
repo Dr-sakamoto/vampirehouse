@@ -70,9 +70,14 @@ export function trianglePath(center: Point, size: number, angle: number): string
   return `M ${pts.join(' L ')} Z`;
 }
 
-/** ハンターの進行方向（次のセクターへ向かう接線方向）の角度。三角の先端をこれに合わせる */
-export function hunterFacingAngle(hunter: Pick<Hunter, 'sector' | 'dir'>): number {
-  return sectorAngle(hunter.sector) + hunter.dir * (Math.PI / 2);
+/**
+ * ハンターの進行方向（次のセクターへ向かう接線方向）の角度。三角の先端をこれに合わせる。
+ * 接線の角度はその三角を置くマスの角度から測る必要がある
+ *（現在地の三角なら現在のセクター、予告の三角なら次のセクター）。
+ * 常に現在のセクターから測ると、リングに沿わずズレて見える。
+ */
+export function hunterFacingAngle(hunter: Pick<Hunter, 'dir'>, atSector: number): number {
+  return sectorAngle(atSector) + hunter.dir * (Math.PI / 2);
 }
 
 /** ring/sector 1マスぶんの扇形（ドーナツ片）。盤面の下敷きを描くのに使う */

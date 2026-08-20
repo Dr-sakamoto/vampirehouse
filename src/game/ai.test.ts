@@ -108,16 +108,17 @@ describe('ボットの判断', () => {
     state.current = 0;
 
     const bot = state.players[0];
-    // 洞窟（避難所）の隣、かつ城まで2歩のマスに、血を抱えて立たせる
-    const cave = cellId(3, 0);
+    // 避難所（リング3のテント）の隣、かつ城まで2歩のマスに、血を抱えて立たせる
+    const refuge = cellId(3, 2);
+    expect(state.board.cells[refuge].kind).toBe('shade');
     bot.at = cellId(3, 1);
     bot.carrying = 2;
     bot.movesLeft = 2;
     state.players[1].at = state.board.castleCells[1];
 
     botTakeTurn(state);
-    // 目の前の洞窟へ逃げ込むのではなく、城に入って得点にしている
-    expect(state.players[0].at).not.toBe(cave);
+    // 目の前の避難所へ逃げ込むのではなく、城に入って得点にしている
+    expect(state.players[0].at).not.toBe(refuge);
     expect(state.players[0].at).toBe(state.board.castleCells[0]);
     expect(state.players[0].score).toBe(90);
   });
