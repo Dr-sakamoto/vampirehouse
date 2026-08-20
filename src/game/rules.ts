@@ -30,22 +30,28 @@ export const PLAYER_NAMES = ['紅の城', '蒼の城', '翠の城', '金の城']
  */
 
 /**
- * 血1つの基礎点。血の本数（＝盤面を流れるモノの量）はそのままに、
- * 1本あたりの価値を10倍にした。4点で勝つゲームは、勝っても手応えが薄い。
+ * 村で一口に吸える血の目。
+ *
+ * 血そのものが点の単位になっている ―― 30 の血を持ち帰れば 30 点。
+ * 「何本」と「何点」を別々に数えるのをやめたので、運搬中の数字を見れば
+ * いま何点を抱えて歩いているかがそのまま分かる。
+ *
+ * 幅を 10〜100 と10倍に取ってあるのは、一口ごとの当たり外れを大きくして
+ * 「もう一口いくか」の判断に重みを持たせるため。上振れ（100）を引いた者は
+ * その場で帰りたくなり、下振れ（10）を引いた者はもう1ターン粘りたくなる。
  */
-const DEFAULT_BLOOD_VALUE = 10;
+const DEFAULT_SUCK_FACES = [10, 30, 50, 100];
 
 export function defaultConfig(playerCount = 2, bots?: boolean[]): GameConfig {
   return {
     playerCount,
     bots: bots ?? Array.from({ length: playerCount }, (_, i) => i > 0),
     baseMove: 3,
-    suckFaces: [1, 2, 3],
+    suckFaces: [...DEFAULT_SUCK_FACES],
     safeRounds: 3,
     dawnChance: 1 / 3,
     totalNights: 4,
-    bloodPool: 12 * playerCount,
-    bloodValue: DEFAULT_BLOOD_VALUE,
+    bloodPool: 350 * playerCount,
     batsPerTurn: 2,
     seed: 1,
   };
@@ -212,22 +218,14 @@ export function isFinalNight(state: GameState): boolean {
   return state.night >= state.config.totalNights;
 }
 
-/** 最終夜は持ち帰りが3倍。差がついていても、最後の一往復で全部ひっくり返る */
-export function deliveryValue(state: GameState): number {
-  return isFinalNight(state) ? 3 : 1;
-}
-
 /**
- * 血 count 本を「いま」城に収めたときの得点。
+ * 最終夜は村が3倍濃い。差がついていても、最後の一往復で全部ひっくり返る。
  *
- * 同時に運んでいる血は、1本目が10点・2本目が20点・3本目が30点 …… と積み上がる
- * （基礎点 × 1+2+…+count）。「欲張るほど帰りが遠い」の裏返しで、
- * 欲張ったまま帰り着いたときだけ、見返りが跳ね上がる。最終夜はさらに3倍。
+ * 「持ち帰りを3倍にする」のではなく**湧く血のほうを3倍**にしているのは、
+ * 血と点を同じ数字に保つため ―― 抱えている 300 は、どの夜でも 300 点になる。
  */
-export function deliveryScore(state: GameState, count: number): number {
-  if (count <= 0) return 0;
-  const stacked = (count * (count + 1)) / 2;
-  return state.config.bloodValue * stacked * deliveryValue(state);
+export function villageRichness(state: GameState): number {
+  return isFinalNight(state) ? 3 : 1;
 }
 
 // ---------------------------------------------------------------- ダイス
@@ -246,18 +244,20 @@ function roll(state: GameState, faces: number): number {
   return Math.floor(r.value * faces);
 }
 
-/** 村で1ターン粘ったときに吸える血。目は config で決まる（既定 1〜3） */
+/** 村で1ターン粘ったときに吸える血。最終夜は村が濃くなる */
 function rollSuck(state: GameState): number {
   const faces = state.config.suckFaces;
   if (faces.length === 0) return 1;
-  return faces[roll(state, faces.length)];
+  return faces[roll(state, faces.length)] * villageRichness(state);
 }
 
 /** 吸血の目の幅と期待値。UI とボットが同じ表を見る */
 export function suckRange(state: GameState): { min: number; max: number; mean: number } {
   const faces = state.config.suckFaces;
-  const mean = faces.reduce((a, b) => a + b, 0) / faces.length;
-  return { min: Math.min(...faces), max: Math.max(...faces), mean };
+  // 最終夜は村が濃くなるので、見せる幅もそのぶん広げる
+  const rich = villageRichness(state);
+  const mean = (faces.reduce((a, b) => a + b, 0) / faces.length) * rich;
+  return { min: Math.min(...faces) * rich, max: Math.max(...faces) * rich, mean };
 }
 
 /**
@@ -308,15 +308,27 @@ function bankBlood(state: GameState, player: Player): void {
   const cell = state.board.cells[player.at];
   if (cell.kind !== 'castle' || cell.castleOf !== player.index) return;
 
+  // 血がそのまま点。換算式は無い
   const carried = player.carrying;
-  const gained = deliveryScore(state, carried);
-  player.score += gained;
+  player.score += carried;
   player.delivered += carried;
   player.carrying = 0;
-  pushLog(state, `${player.name} が血 ${carried} を持ち帰った（+${gained}点）。`, 'good');
+  pushLog(state, `${player.name} が血 ${carried} を持ち帰った。そのまま ${carried} 点。`, 'good');
 }
 
-/** 血を1本、被害者から加害者へ移す。総量は変わらない */
+/**
+ * 一口ぶんの奪い高。相手が抱えている血の半分（10単位に丸める）。
+ *
+ * 血が「本数」だった頃、噛みつきは1本＝おおむね相手の持ち分の半分を奪っていた。
+ * 血が点そのものになった今、固定額にすると相手の懐次第で無意味にも致命的にもなるので、
+ * 当時の割合をそのまま規則にした。盤上の数字がいくつになっても効き目が変わらない。
+ */
+export function biteAmount(carrying: number): number {
+  if (carrying <= 0) return 0;
+  return Math.max(10, Math.round(carrying / 2 / 10) * 10);
+}
+
+/** 血を被害者から加害者へ移す。総量は変わらない */
 function transferBlood(thief: Player, victim: Player, amount: number): void {
   const taken = Math.min(amount, victim.carrying);
   if (taken <= 0) return;
@@ -375,11 +387,12 @@ function bite(state: GameState, attacker: Player, cellIdAt: string): void {
     .filter((p) => p.index !== attacker.index && p.at === cellIdAt && p.carrying > 0)
     .sort((a, b) => b.carrying - a.carrying)[0];
   if (!prey) return;
-  transferBlood(attacker, prey, 1);
+  const taken = biteAmount(prey.carrying);
+  transferBlood(attacker, prey, taken);
   attacker.bitThisTurn = true;
   pushLog(
     state,
-    `${attacker.name} が ${prey.name} に噛みつき、血を1つ奪った（運搬中 ${attacker.carrying}）。`,
+    `${attacker.name} が ${prey.name} に噛みつき、血 ${taken} を奪った（運搬中 ${attacker.carrying}）。`,
     'bad',
   );
 }
@@ -645,8 +658,9 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
         ? target.player
         : targets[0];
       const victim = state.players[victimIndex];
-      transferBlood(player, victim, 1);
-      pushLog(state, `${player.name} が《${spec.name}》で ${victim.name} の血を1つ奪った。`, 'bad');
+      const taken = biteAmount(victim.carrying);
+      transferBlood(player, victim, taken);
+      pushLog(state, `${player.name} が《${spec.name}》で ${victim.name} の血 ${taken} を奪った。`, 'bad');
       break;
     }
     case 'shroud': {

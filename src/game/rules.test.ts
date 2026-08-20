@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { RING_COUNT, VILLAGE, cellId, shortestPath } from './board';
 import { BAT_SPECS } from './bats';
 import {
+  biteAmount,
   createGame,
   currentPlayer,
   defaultConfig,
-  deliveryScore,
-  deliveryValue,
+  villageRichness,
   endTurn,
   hunterCells,
   isSafeCell,
@@ -53,8 +53,8 @@ describe('初期状態', () => {
   });
 
   it('村の血はプレイヤー数に比例する', () => {
-    expect(newGame(2).bloodPool).toBe(24);
-    expect(newGame(4).bloodPool).toBe(48);
+    expect(newGame(2).bloodPool).toBe(700);
+    expect(newGame(4).bloodPool).toBe(1400);
   });
 
   it('ハンターは人数によらず2体、リング2を同じ向きに周回する', () => {
@@ -115,13 +115,14 @@ describe('移動', () => {
 });
 
 describe('血の回収と持ち帰り', () => {
-  it('村でターンを終えると血を1つ得る', () => {
+  it('村でターンを終えると、吸ったぶんだけ村の血が減る', () => {
     const state = newGame(2);
     teleport(state, 0, VILLAGE);
     const before = state.bloodPool;
     endTurn(state);
-    expect(state.players[0].carrying).toBe(1);
-    expect(state.bloodPool).toBe(before - 1);
+    const got = state.players[0].carrying;
+    expect(got).toBeGreaterThan(0);
+    expect(state.bloodPool).toBe(before - got);
   });
 
   it('村を通過しただけでは血は手に入らない', () => {
@@ -149,23 +150,22 @@ describe('血の回収と持ち帰り', () => {
       (n) => state.board.cells[n].kind !== 'castle',
     )!;
     teleport(state, 0, gate);
-    state.players[0].carrying = 3;
+    state.players[0].carrying = 60;
     moveTo(state, castle);
-    // 1本目10点・2本目20点・3本目30点
     expect(state.players[0].score).toBe(60);
     expect(state.players[0].carrying).toBe(0);
-    expect(state.players[0].delivered).toBe(3);
+    expect(state.players[0].delivered).toBe(60);
   });
 
   it('城の中で手に入れた血も、ターン終了時に得点になる', () => {
     const state = newGame(2);
     // 城に立ったまま《強奪》で血を得る
-    state.players[1].carrying = 1;
+    state.players[1].carrying = 20;
     teleport(state, 1, VILLAGE);
     const uid = giveBat(state, 0, 'steal');
     expect(state.board.cells[state.players[0].at].kind).toBe('castle');
     playBat(state, uid, { player: 1 });
-    expect(state.players[0].carrying).toBe(1);
+    expect(state.players[0].carrying).toBe(10);
     endTurn(state);
     expect(state.players[0].score).toBe(10);
     expect(state.players[0].carrying).toBe(0);
@@ -175,7 +175,7 @@ describe('血の回収と持ち帰り', () => {
     const state = newGame(2);
     teleport(state, 0, VILLAGE);
     endTurn(state);
-    expect(state.players[0].carrying).toBe(1);
+    expect(state.players[0].carrying).toBeGreaterThan(0);
     expect(state.players[0].score).toBe(0);
   });
 });
@@ -244,11 +244,11 @@ describe('移動力', () => {
     const state = newGame(2);
     state.players[0].carrying = 0;
     const uid = giveBat(state, 0, 'steal');
-    state.players[1].carrying = 4;
+    state.players[1].carrying = 40;
     teleport(state, 1, VILLAGE);
     expect(currentPlayer(state).movesLeft).toBe(3);
     playBat(state, uid, { player: 1 });
-    expect(state.players[0].carrying).toBe(1);
+    expect(state.players[0].carrying).toBe(20);
     expect(currentPlayer(state).movesLeft).toBe(3);
   });
 });
@@ -430,16 +430,16 @@ describe('コウモリの効果', () => {
 
   it('強奪: 城の外にいる相手からのみ奪える', () => {
     const state = newGame(2);
-    state.players[1].carrying = 2;
+    state.players[1].carrying = 40;
     // 城の中は安全
     teleport(state, 1, state.board.castleCells[1]);
     const uid = giveBat(state, 0, 'steal');
     expect(playBat(state, uid, { player: 1 })).toBe(false);
-    // 外に出れば奪える
+    // 外に出れば奪える（半分）
     teleport(state, 1, VILLAGE);
     expect(playBat(state, uid, { player: 1 })).toBe(true);
-    expect(state.players[0].carrying).toBe(1);
-    expect(state.players[1].carrying).toBe(1);
+    expect(state.players[0].carrying).toBe(20);
+    expect(state.players[1].carrying).toBe(20);
   });
 
   it('影紡ぎ: そのマスを今夜だけ日陰にする', () => {
@@ -517,22 +517,25 @@ describe('コウモリの効果', () => {
 });
 
 describe('決着', () => {
-  it('最終夜の持ち帰りは3倍', () => {
-    const state = newGame(2);
-    expect(deliveryValue(state)).toBe(1);
-    state.night = state.config.totalNights;
-    expect(deliveryValue(state)).toBe(3);
+  it('最終夜は村が3倍濃くなる（持ち帰りの倍率ではない）', () => {
+    const config = defaultConfig(2, [false, false]);
+    config.suckFaces = [20];
+    const state = createGame(config);
+    expect(villageRichness(state)).toBe(1);
 
-    const castle = state.board.castleCells[0];
-    const gate = state.board.cells[castle].neighbors.find(
-      (n) => state.board.cells[n].kind !== 'castle',
-    )!;
-    teleport(state, 0, gate);
-    state.players[0].carrying = 2;
-    moveTo(state, castle);
-    // (10 + 20) × 3
-    expect(state.players[0].score).toBe(90);
-    expect(state.players[0].delivered).toBe(2);
+    // 通常の夜: 目のまま
+    teleport(state, 0, VILLAGE);
+    endTurn(state);
+    expect(state.players[0].carrying).toBe(20);
+
+    // 最終夜: 湧く血が3倍。抱えた数字はそのまま点になる
+    state.night = state.config.totalNights;
+    expect(villageRichness(state)).toBe(3);
+    state.current = 0;
+    state.players[0].carrying = 0;
+    teleport(state, 0, VILLAGE);
+    endTurn(state);
+    expect(state.players[0].carrying).toBe(60);
   });
 
   it('規定の夜数を終えるとゲームが終わる', () => {
@@ -574,37 +577,64 @@ describe('決着', () => {
   });
 });
 
-describe('得点の量', () => {
-  it('同時に運んだ血は1本目10点・2本目20点・3本目30点と積み上がる', () => {
+describe('血と得点', () => {
+  it('血はそのまま点 ―― 換算式は無い', () => {
     const state = newGame(2);
-    expect(state.config.bloodValue).toBe(10);
-    expect(deliveryScore(state, 0)).toBe(0);
-    expect(deliveryScore(state, 1)).toBe(10);
-    expect(deliveryScore(state, 2)).toBe(30);
-    expect(deliveryScore(state, 3)).toBe(60);
-    expect(deliveryScore(state, 4)).toBe(100);
+    const castle = state.board.castleCells[0];
+    const gate = state.board.cells[castle].neighbors.find(
+      (n) => state.board.cells[n].kind !== 'castle',
+    )!;
+    teleport(state, 0, gate);
+    state.players[0].carrying = 130;
+    moveTo(state, castle);
+    expect(state.players[0].score).toBe(130);
+    expect(state.players[0].delivered).toBe(130);
   });
 
-  it('血1つの得点は設定で変えられる', () => {
+  it('村の目は10〜100の幅を持つ', () => {
+    const state = newGame(2);
+    const { min, max } = suckRange(state);
+    expect(min).toBe(10);
+    expect(max).toBe(100);
+    expect(state.config.suckFaces).toEqual([10, 30, 50, 100]);
+  });
+
+  it('最終夜は「持ち帰り3倍」ではなく村が3倍濃い（血と点は最後まで同じ数字）', () => {
     const config = defaultConfig(2, [false, false]);
-    config.bloodValue = 1;
+    config.suckFaces = [10];
     const state = createGame(config);
-    expect(deliveryScore(state, 1)).toBe(1);
-    expect(deliveryScore(state, 2)).toBe(3);
+    teleport(state, 0, VILLAGE);
+    endTurn(state);
+    expect(state.players[0].carrying).toBe(10);
+
+    state.night = state.config.totalNights;
+    state.current = 0;
+    state.players[0].carrying = 0;
+    teleport(state, 0, VILLAGE);
+    endTurn(state);
+    expect(state.players[0].carrying).toBe(30);
   });
 });
 
 describe('噛みつき（PVP）', () => {
-  it('相手のいるマスへ踏み込むと血を1つ奪う', () => {
+  it('相手のいるマスへ踏み込むと血の半分を奪う', () => {
     const state = newGame(2);
     const spot = cellId(1, 0);
     teleport(state, 1, spot);
-    state.players[1].carrying = 2;
+    state.players[1].carrying = 60;
     teleport(state, 0, VILLAGE);
     moveTo(state, spot);
-    expect(state.players[0].carrying).toBe(1);
-    expect(state.players[0].stolen).toBe(1);
-    expect(state.players[1].carrying).toBe(1);
+    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[0].stolen).toBe(30);
+    expect(state.players[1].carrying).toBe(30);
+  });
+
+  it('奪い高は10単位に丸められ、最低でも10は奪う', () => {
+    expect(biteAmount(0)).toBe(0);
+    expect(biteAmount(10)).toBe(10);
+    expect(biteAmount(50)).toBe(30);
+    expect(biteAmount(60)).toBe(30);
+    expect(biteAmount(100)).toBe(50);
   });
 
   it('噛みつけるのは1ターンに1回まで', () => {
@@ -613,13 +643,13 @@ describe('噛みつき（PVP）', () => {
     const b = cellId(1, 1);
     teleport(state, 1, a);
     teleport(state, 2, b);
-    state.players[1].carrying = 2;
-    state.players[2].carrying = 2;
+    state.players[1].carrying = 40;
+    state.players[2].carrying = 40;
     teleport(state, 0, VILLAGE);
     moveTo(state, a);
     moveTo(state, b);
-    expect(state.players[0].carrying).toBe(1);
-    expect(state.players[2].carrying).toBe(2);
+    expect(state.players[0].carrying).toBe(20);
+    expect(state.players[2].carrying).toBe(40);
   });
 
   it('血を持たない相手には噛みついても何も起きない', () => {

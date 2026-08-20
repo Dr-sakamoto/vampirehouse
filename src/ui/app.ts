@@ -6,7 +6,6 @@ import {
   createGame,
   currentPlayer,
   defaultConfig,
-  deliveryScore,
   endTurn,
   flightTargets,
   isFinalNight,
@@ -421,14 +420,9 @@ export class App {
       }<b>${me.movesLeft}</b></span>
       ${
         me.carrying > 0
-          ? `<span class="stat" title="運搬中の血 ${me.carrying} ―― いま城まで運べば ${deliveryScore(
-              s,
-              me.carrying,
-            )} 点。もう1つ増やせば次の1本は ${
-              deliveryScore(s, me.carrying + 1) - deliveryScore(s, me.carrying)
-            } 点になる">${ICON.blood}<b>${me.carrying}</b><span class="to">→</span>${
-              ICON.castle
-            }<b>${deliveryScore(s, me.carrying)}</b></span>`
+          ? `<span class="stat" title="運搬中の血 ${me.carrying} ―― 血はそのまま点。城まで運べば ${me.carrying} 点になる">${
+              ICON.blood
+            }<b>${me.carrying}</b><span class="to">→</span>${ICON.castle}<b>${me.carrying}</b></span>`
           : ''
       }
     `;
