@@ -285,7 +285,7 @@ button.ghost { background: transparent; }
 .piece-label.is-small { font-size: 15px; }
 .piece.is-current .piece-body { stroke: #fff; stroke-width: 6; }
 .piece-blood circle { fill: #8c0f1c; stroke: var(--paper); stroke-width: 3; }
-.piece-blood-count { font-size: 13px; font-weight: 800; fill: #fff; }
+.piece-blood-count { font-size: 15px; font-weight: 800; fill: #fff; }
 
 /* --- 軌跡 --- */
 
