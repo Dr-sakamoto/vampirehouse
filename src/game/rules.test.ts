@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { RING_COUNT, VILLAGE, cellId, shortestPath } from './board';
 import { BAT_SPECS } from './bats';
 import {
-  CAVE_DRAW,
   biteAmount,
   createGame,
   currentPlayer,
@@ -363,16 +362,15 @@ describe('ハンター', () => {
 });
 
 describe('洞窟とコウモリ', () => {
-  it(`洞窟に入るとコウモリを${CAVE_DRAW}枚引く`, () => {
+  it('洞窟に入るとコウモリを1枚引く', () => {
     const state = newGame(2);
     const cave = state.board.caveCells[0];
     teleport(state, 0, state.board.cells[cave].neighbors[0]);
     moveTo(state, cave);
-    expect(state.players[0].bats).toHaveLength(CAVE_DRAW);
-    expect(state.cavesLooted).toContain(cave);
+    expect(state.players[0].bats).toHaveLength(1);
   });
 
-  it('同じ洞窟は一夜に1回しか採れない', () => {
+  it('同じターン中に同じ洞窟を出入りしても2枚目は引けない', () => {
     const state = newGame(2);
     const cave = state.board.caveCells[0];
     const gate = state.board.cells[cave].neighbors[0];
@@ -380,17 +378,21 @@ describe('洞窟とコウモリ', () => {
     moveTo(state, cave);
     moveTo(state, gate);
     moveTo(state, cave);
-    expect(state.players[0].bats).toHaveLength(CAVE_DRAW);
+    expect(state.players[0].bats).toHaveLength(1);
   });
 
-  it('夜が明けると洞窟は復活する', () => {
+  it('先に他プレイヤーが通った洞窟でも変わらず1枚引ける', () => {
     const state = newGame(2);
     const cave = state.board.caveCells[0];
-    teleport(state, 0, state.board.cells[cave].neighbors[0]);
+    const gate = state.board.cells[cave].neighbors[0];
+    teleport(state, 0, gate);
     moveTo(state, cave);
-    expect(state.cavesLooted).toHaveLength(1);
-    for (let i = 0; i < 4; i++) passRound(state);
-    expect(state.cavesLooted).toHaveLength(0);
+    moveTo(state, gate); // 洞窟は定員1人なので出ておく
+    endTurn(state);
+    teleport(state, 1, gate);
+    moveTo(state, cave);
+    expect(state.players[0].bats).toHaveLength(1);
+    expect(state.players[1].bats).toHaveLength(1);
   });
 
   it('1ターンに拾える洞窟は1つまで', () => {
@@ -399,7 +401,6 @@ describe('洞窟とコウモリ', () => {
     const path = shortestPath(state.board, caveA, caveB)!;
     teleport(state, 0, caveA);
     state.players[0].lootedCaveThisTurn = true;
-    state.cavesLooted.push(caveA);
     state.players[0].movesLeft = path.length;
     for (const step of path.slice(1)) moveTo(state, step);
     expect(state.players[0].bats).toHaveLength(0);
