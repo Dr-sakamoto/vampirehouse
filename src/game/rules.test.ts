@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { RING_COUNT, VILLAGE, cellId, shortestPath } from './board';
+import { RING_COUNT, VILLAGE, castleGate, cellId, shortestPath } from './board';
 import { BAT_SPECS } from './bats';
 import {
   batPlayError,
@@ -477,7 +477,7 @@ describe('コウモリの効果', () => {
     expect(trapAt(state, spot)?.owner).toBe(0);
   });
 
-  it('スタン罠: 踏んだ相手は弾き返され、足を止められる。罠は消える', () => {
+  it('スタン罠: 踏んだ相手はそのマスに捕まり、足を止められる。罠は消える', () => {
     const state = newGame(2);
     const spot = cellId(1, 0);
     teleport(state, 0, spot);
@@ -490,28 +490,72 @@ describe('コウモリの効果', () => {
     expect(currentPlayer(state).index).toBe(1);
     expect(currentPlayer(state).movesLeft).toBe(3);
     moveTo(state, spot);
-    // 罠のマスには入れていない ―― 元いた場所へ弾き返される
-    expect(state.players[1].at).toBe(from);
+    // 罠のマスに貼り付けられ、まだ2歩残っていた足がそこで終わる
+    expect(state.players[1].at).toBe(spot);
     expect(state.players[1].movesLeft).toBe(0);
     expect(trapAt(state, spot)).toBeUndefined();
   });
 
-  it('スタン罠: 避難所に置けば、その椅子そのものが目的地として潰れる', () => {
+  it('スタン罠: 移動の途中でも、罠のマスへ入った瞬間に発動する', () => {
     const state = newGame(2);
+    const spot = cellId(1, 0);
+    teleport(state, 0, spot);
+    playBat(state, giveBat(state, 0, 'snare'));
+    endTurn(state);
+
+    // 罠を通り抜けて村まで行くつもりだった
+    teleport(state, 1, cellId(2, 0));
+    moveTo(state, spot);
+    expect(state.players[1].at).toBe(spot);
+    expect(state.players[1].movesLeft).toBe(0);
+    // 村へは進めない
+    expect(legalMoves(state)).toHaveLength(0);
+  });
+
+  it('スタン罠: 城の門に張れば迂回路が無い ―― 帰るには踏むしかない', () => {
+    const state = newGame(2);
+    const gate = castleGate(state.board, 1);
+    // 門は城1に繋がる唯一のマス
+    expect(state.board.cells[state.board.castleCells[1]].neighbors).toEqual([gate]);
+
+    teleport(state, 0, gate);
+    playBat(state, giveBat(state, 0, 'snare'));
+    endTurn(state);
+
+    state.players[1].carrying = 120;
+    teleport(state, 1, cellId(RING_COUNT, 2));
+    moveTo(state, gate);
+    // 門で捕まる。城は目の前だが、この手番では入れない
+    expect(state.players[1].at).toBe(gate);
+    expect(state.players[1].movesLeft).toBe(0);
+    expect(state.players[1].carrying).toBe(120);
+    expect(state.players[1].score).toBe(0);
+  });
+
+  it('スタン罠: 最終夜に避難所へ捕まると、血を抱えたまま朝を迎えて0点になる', () => {
+    const state = newGame(2);
+    state.night = state.config.totalNights;
+    state.config.dawnChance = 1;
     const tent = state.board.shadeCells[0];
     const from = state.board.cells[tent].neighbors.find(
       (id) => state.board.cells[id].kind === 'plain',
     )!;
+
     teleport(state, 0, tent);
     playBat(state, giveBat(state, 0, 'snare'));
     teleport(state, 0, state.board.castleCells[0]);
     endTurn(state);
 
+    state.players[1].carrying = 150;
     teleport(state, 1, from);
     moveTo(state, tent);
-    // 迂回路が無い ―― 椅子そのものが罠なので、座れないまま足も止まる
-    expect(state.players[1].at).toBe(from);
+    // 椅子には座れる ―― が、最終夜の避難所は1点にもならない
+    expect(state.players[1].at).toBe(tent);
     expect(state.players[1].movesLeft).toBe(0);
+
+    for (let i = 0; i < 12 && state.phase !== 'gameover'; i++) passRound(state);
+    expect(state.phase).toBe('gameover');
+    expect(state.players[1].score).toBe(0);
   });
 
   it('スタン罠: 仕掛けた本人は踏んでも作動しない', () => {
@@ -525,30 +569,47 @@ describe('コウモリの効果', () => {
     expect(trapAt(state, spot)?.owner).toBe(0);
   });
 
-  it('強襲: 通り抜けたマスにいる相手をスタンさせ、次の手番を奪う', () => {
+  it('強襲: 通り抜けたマスにいる相手を仕留め、その血を奪う', () => {
     const state = newGame(2);
     const via = cellId(1, 0);
     teleport(state, 0, VILLAGE);
     teleport(state, 1, via);
+    state.players[1].carrying = 80;
+    const poolBefore = state.bloodPool;
     playBat(state, giveBat(state, 0, 'rush'));
     moveTo(state, via);
-    expect(state.players[1].stunned).toBe(true);
 
-    endTurn(state);
-    // 痺れている側の手番は移動力0で始まる
-    expect(currentPlayer(state).index).toBe(1);
-    expect(currentPlayer(state).movesLeft).toBe(0);
-    expect(currentPlayer(state).stunned).toBe(false);
-    expect(legalMoves(state)).toHaveLength(0);
+    expect(state.players[1].deaths).toBe(1);
+    expect(state.players[1].carrying).toBe(0);
+    expect(state.players[1].at).toBe(state.board.castleCells[1]);
+    // 血は村へ還らず、襲った側の懐に入る
+    expect(state.players[0].carrying).toBe(80);
+    expect(state.players[0].kills).toBe(1);
+    expect(state.bloodPool).toBe(poolBefore);
   });
 
-  it('強襲: 構えを取った時点で、同じマスの相手はその場で止まる', () => {
+  it('強襲: 構えを取った時点で、同じマスの相手も仕留める', () => {
     const state = newGame(2);
     const spot = cellId(1, 0);
     teleport(state, 0, spot);
     teleport(state, 1, spot);
+    state.players[1].carrying = 30;
     playBat(state, giveBat(state, 0, 'rush'));
-    expect(state.players[1].stunned).toBe(true);
+    expect(state.players[1].deaths).toBe(1);
+    expect(state.players[0].carrying).toBe(30);
+  });
+
+  it('強襲: 蝙蝠傘を差していれば1回だけ凌げる', () => {
+    const state = newGame(2);
+    const spot = cellId(1, 0);
+    teleport(state, 1, spot);
+    state.players[1].carrying = 30;
+    state.players[1].parasol = true;
+    teleport(state, 0, spot);
+    playBat(state, giveBat(state, 0, 'rush'));
+    expect(state.players[1].deaths).toBe(0);
+    expect(state.players[1].carrying).toBe(30);
+    expect(state.players[1].parasol).toBe(false);
   });
 
   it('蝙蝠傘: 陽光を1回だけ肩代わりし、血も位置も残る', () => {

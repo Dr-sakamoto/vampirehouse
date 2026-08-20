@@ -136,6 +136,18 @@ export function createBoard(): Board {
   };
 }
 
+/**
+ * その城の「門」―― 城に繋がる唯一のマス。
+ *
+ * 城は最外リングの1マスにしかぶら下がっていない（隣接数1）ので、盤面で
+ * ここだけが**迂回路の存在しない一本道**になる。実測でも、門を塞ぐと村から
+ * その城へは到達不能になり、他のどのマスを塞いでも +1歩で迂回できる。
+ * スタン罠がいちばん効くのはこのマス ―― 血を抱えた相手の帰り道そのものになる。
+ */
+export function castleGate(board: Board, playerIndex: number): string {
+  return board.cells[castleOf(board, playerIndex)].neighbors[0];
+}
+
 export function castleOf(board: Board, playerIndex: number): string {
   return board.castleCells[playerIndex % board.castleCells.length];
 }

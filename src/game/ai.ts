@@ -1,4 +1,4 @@
-import { VILLAGE, cellId, isRefugeKind } from './board';
+import { VILLAGE, castleGate, cellId, isRefugeKind } from './board';
 import { HAND_LIMIT } from './bats';
 import {
   batPlayError,
@@ -29,6 +29,12 @@ import type { BatKind, GameState, Player } from './types';
  */
 const GREED_CAP = 220;
 
+/**
+ * 罠を張りに行く価値があると見なす、相手の運搬量。
+ * 村の一口の平均（約48）より大きい ―― つまり「一往復ぶん以上を抱えている相手」を狙う。
+ */
+const SNARE_WORTH = 60;
+
 function findBat(player: Player, kind: BatKind): string | null {
   return player.bats.find((b) => b.kind === kind)?.uid ?? null;
 }
@@ -52,15 +58,23 @@ function foreignCastles(state: GameState, me: Player): Set<string> {
   return set;
 }
 
-/**
- * 侵入できない／踏みたくないマス（他人の城・埋まった避難所・他人の罠）。
- * 罠は伏せずに盤上へ出ているので、踏むのは読み違えたときだけ ―― 経路からは外す。
- */
-function blockedCells(state: GameState, me: Player): Set<string> {
+/** 本当に侵入できないマス（他人の城・埋まった避難所） */
+function hardBlocked(state: GameState, me: Player): Set<string> {
   const set = foreignCastles(state, me);
   for (const p of state.players) {
     if (p.index !== me.index && isRefugeKind(state.board.cells[p.at].kind)) set.add(p.at);
   }
+  return set;
+}
+
+/**
+ * 踏みたくないマス（上記＋他人の罠）。
+ * 罠は伏せずに盤上へ出ているので、避けられるかぎりは避ける ―― ただし
+ * **通れないわけではない**。城の門は迂回路の無い一本道なので、そこを塞がれたら
+ * 「踏んで1手番を捨ててでも帰る」が正しいことがある（`routeFrom` の最終手段）。
+ */
+function blockedCells(state: GameState, me: Player): Set<string> {
+  const set = hardBlocked(state, me);
   for (const t of state.traps) {
     if (t.owner !== me.index) set.add(t.cell);
   }
@@ -99,7 +113,10 @@ function safePath(
   return null;
 }
 
-/** ハンターを避けた経路を優先し、無ければ現在位置のハンターだけ避ける */
+/**
+ * ハンターと罠を避けた経路を優先し、無ければ譲れるものから譲る。
+ * 最後の最後は「罠は踏む、ハンターだけは踏まない」―― 門を塞がれたときの逃げ道。
+ */
 function routeFrom(state: GameState, me: Player, from: string, target: string): string[] | null {
   const blocked = blockedCells(state, me);
   const cautious = new Set([...blocked, ...dangerCells(state)]);
@@ -107,7 +124,11 @@ function routeFrom(state: GameState, me: Player, from: string, target: string): 
   if (path) return path;
   // どう通ってもハンターの進路をかすめるなら、せめて今いるマスだけは踏まない
   const minimal = new Set([...blocked, ...hunterCells(state)]);
-  return safePath(state, from, target, minimal);
+  const grazing = safePath(state, from, target, minimal);
+  if (grazing) return grazing;
+  // それでも届かないなら、罠は踏む。1手番は失うが、抱えた血は守れる
+  const desperate = new Set([...hardBlocked(state, me), ...hunterCells(state)]);
+  return safePath(state, from, target, desperate);
 }
 
 function routeTo(state: GameState, me: Player, target: string): string[] | null {
@@ -268,26 +289,33 @@ function villageRivals(state: GameState, me: Player): number {
 }
 
 /**
- * ここに罠を仕掛ける価値があるか。
+ * 罠を張る価値がいちばん高いマス ―― **血を抱えた相手の城の門**。
  *
- * 締め出しが起きるのは避難所の手前なので、避難所に隣接するマスに置く。
- * 罠は見えているので相手は迂回できるが、予告ラウンドの移動力3で
- * 村→テントの2歩を迂回させられれば、それだけで間に合わなくなることがある。
+ * 城は最外リングの1マスにしかぶら下がっていないので、門は盤面で唯一
+ * 迂回路の無いマスになる（`castleGate` の注記）。ここを塞がれた相手は、
+ * 城へ入るには罠を踏んで弾き返されるしかない ―― 予告ラウンドなら、
+ * その1ターンがそのまま焼死になる。
+ *
+ * 門は最外リングを2歩でたどれる隣同士なので、洞窟でコウモリを引いた足で
+ * 隣の城の門へ張り、洞窟へ戻って朝を待つ、という一連が実際に回る。
  */
-function worthSnaring(state: GameState, me: Player): boolean {
-  const cell = state.board.cells[me.at];
-  if (cell.kind === 'village' || cell.kind === 'castle') return false;
-  if (trapAt(state, me.at)) return false;
-  // 効くのはテントの上か、その手前。洞窟は城の劣化版なので誰も命綱にしない。
-  // テントそのものに置ければ最良 ―― その椅子は自分だけのものになる
-  const onTent = cell.kind === 'shade';
-  if (!onTent && !cell.neighbors.some((id) => state.board.cells[id].kind === 'shade')) {
-    return false;
+function snareSpots(state: GameState, me: Player): string[] {
+  // 抱えている血が多い相手ほど、帰り道を塞ぐ価値がある
+  const marks = state.players
+    .filter((p) => p.index !== me.index && p.carrying > 0)
+    .sort((a, b) => b.carrying - a.carrying);
+  const spots: string[] = [];
+  for (const mark of marks) {
+    const gate = castleGate(state.board, mark.index);
+    if (!trapAt(state, gate) && mark.at !== gate) spots.push(gate);
   }
-  // 外に出ている相手がいるときだけ意味がある
-  return state.players.some(
-    (p) => p.index !== me.index && state.board.cells[p.at].kind !== 'castle',
-  );
+  return spots;
+}
+
+/** いま立っているマスが、そのまま罠の置き場所として使えるか */
+function worthSnaring(state: GameState, me: Player): boolean {
+  if (trapAt(state, me.at)) return false;
+  return snareSpots(state, me).includes(me.at);
 }
 
 /** いま立っている場所に置く価値があるなら罠を置く */
@@ -300,6 +328,26 @@ function trySnare(state: GameState): void {
   playBat(state, uid);
 }
 
+/**
+ * 罠を置きに行く寄り道。目的地までの経路に門を挟めるなら、2歩までは払う。
+ * 洞窟と城の門は最外リングで隣り合っているので、帰りがけに寄れることが多い。
+ */
+function snareDetour(state: GameState, me: Player, target: string | null): string[] | null {
+  if (!findBat(me, 'snare') || me.movesLeft <= 0) return null;
+  const direct = target === null ? 0 : pathCost(routeTo(state, me, target));
+  let best: { path: string[]; extra: number } | null = null;
+  for (const spot of snareSpots(state, me)) {
+    const toSpot = routeTo(state, me, spot);
+    if (!toSpot || pathCost(toSpot) > me.movesLeft) continue;
+    const rest = target === null || target === spot ? [spot] : routeFrom(state, me, spot, target);
+    if (!rest) continue;
+    const extra = pathCost(toSpot) + pathCost(rest) - direct;
+    if (extra > 2) continue;
+    if (!best || extra < best.extra) best = { path: [...toSpot, ...rest.slice(1)], extra };
+  }
+  return best?.path ?? null;
+}
+
 /** ボット1人ぶんの手番をすべて処理し、ターンを終える */
 export function botTakeTurn(state: GameState): void {
   if (state.phase !== 'playing') return;
@@ -308,34 +356,37 @@ export function botTakeTurn(state: GameState): void {
   // 全員が同時に椅子へ走る、この盤面で唯一の場面
   const escapeNow = dawnAnnounced(state);
 
-  // --- テントの手前に罠を置いておく。夜明けまで残るので、早いほど効く ---
+  // 既に門の上に立っているなら、動く前に張っておく
   trySnare(state);
 
   // --- 行き先を決める ---
   const target = chooseTarget(state, escapeNow);
 
-  // --- 予告ラウンドなら、逃げる途中で誰かを踏み潰せないか探す ---
-  // 強襲は「構え」なので、動き出す前に切っておく必要がある
-  let path = target === null ? null : routeTo(state, me, target);
-  if (escapeNow) {
-    const rushUid = findBat(me, 'rush');
-    if (rushUid && batPlayError(state, 'rush') === null) {
-      const hunt = biteDetour(state, me, target, true, true);
-      if (hunt) {
-        playBat(state, rushUid);
-        path = hunt;
-      }
+  // --- 強襲は「構え」なので、動き出す前に切っておく必要がある ---
+  // 相手のマスへちょうど乗れるときだけ意味がある札で、決まれば相手の血を丸ごと奪える。
+  // 血を積んだ相手が射程にいるなら、予告ラウンドでなくても狙う価値がある
+  let path: string[] | null = null;
+  const rushUid = findBat(me, 'rush');
+  if (rushUid && batPlayError(state, 'rush') === null) {
+    const hunt = biteDetour(state, me, target, escapeNow, escapeNow);
+    if (hunt) {
+      playBat(state, rushUid);
+      path = hunt;
     }
   }
 
-  if (path === null && target !== null) path = routeTo(state, me, target);
-  const detour = biteDetour(state, currentPlayer(state), target, escapeNow);
-  if (detour && !currentPlayer(state).rushing) path = detour;
+  // --- 血を抱えた相手の城の門へ、寄り道して罠を張る ---
+  if (path === null) path = snareDetour(state, currentPlayer(state), target);
+
+  // --- 罠を張りに行かないなら、通りすがりに噛める相手を探す ---
+  // 素の経路より寄り道のほうが優先。ここを素の経路の後ろに置くと噛みつきが死ぬ
+  if (path === null) path = biteDetour(state, currentPlayer(state), target, escapeNow);
+
+  if (path === null && target !== null) path = routeTo(state, currentPlayer(state), target);
   if (path) walk(state, path);
-  stepOffPatrolPath(state);
-  // 歩いた先がテントの手前だったなら、そこにも置いていく。
-  // 手番の初めだけを見ていると、罠を置ける位置に立っている場面をほとんど拾えない
+  // 歩いた先が門だったなら、そこで張る
   trySnare(state);
+  stepOffPatrolPath(state);
 
   // --- 朝が来る前の保険（最終夜は隠れても加点されないので使わない） ---
   if (escapeNow && !isFinalNight(state)) {
@@ -426,7 +477,32 @@ function chooseTarget(state: GameState, escapeNow: boolean): string | null {
     return home;
   }
 
-  // 手ぶら: 村を目指す。ただし朝までに逃げ込める見込みがある時だけ
+  // 手ぶら: 自分の稼ぎより大きく抱えている相手がいるなら、村へ行くより
+  // その相手の城の門を塞ぎに行くほうが期待値が高い。門は迂回路の無い一本道なので、
+  // 予告ラウンドに間に合わせれば、相手はその夜の稼ぎを丸ごと落とす。
+  // 張ったあとは洞窟が門の隣にあるので、そのまま座って朝を待てる。
+  if (findBat(me, 'snare')) {
+    const prey = state.players
+      .filter((p) => p.index !== me.index && p.carrying >= SNARE_WORTH)
+      .sort((a, b) => b.carrying - a.carrying)[0];
+    if (prey) {
+      const gate = castleGate(state.board, prey.index);
+      const gateCost = pathCost(routeTo(state, me, gate));
+      // 張りに行って自分が焼けては元も子もない。門から逃げ込める先も要る
+      const escapeAfter = nearestRefuge(state, me, gate, true);
+      if (
+        gateCost <= nightBudget &&
+        !trapAt(state, gate) &&
+        prey.at !== gate &&
+        escapeAfter !== null &&
+        gateCost + escapeAfter.cost <= nightBudget
+      ) {
+        return gate;
+      }
+    }
+  }
+
+  // 村を目指す。ただし朝までに逃げ込める見込みがある時だけ
   const villageCost = pathCost(routeTo(state, me, VILLAGE));
   if (villageCost === Number.POSITIVE_INFINITY) return home;
   if (state.bloodPool <= 0) {

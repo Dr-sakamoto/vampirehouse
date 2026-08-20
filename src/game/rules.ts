@@ -2,6 +2,7 @@ import {
   CASTLE_SECTORS,
   RING_COUNT,
   VILLAGE,
+  castleGate,
   castleOf,
   cellId,
   createBoard,
@@ -484,28 +485,29 @@ export function moveTo(state: GameState, target: string): boolean {
     return true;
   }
 
-  // 他人の罠を踏んだ。足を止められたうえ、踏み込む前のマスへ弾き返される。
+  // 他人の罠に掛かった。そのマスに貼り付けられ、この手番の足はそこで終わる。
   //
-  // 「その場で止まる」だけだと罠はほぼ無意味だった。避難所はどれも隣が4マスあり、
-  // 罠を1枚置いても同じ歩数の迂回路が残るので、見えている罠は必ず避けられる
-  // （実測でボット128個の罠が1度も踏まれなかった）。弾き返すなら話が別で、
-  // **罠を置いた椅子そのものが目的地として潰れる** ―― 迂回のしようがない。
+  // 弾き返すのではなく吸着させる ―― 規則としては「移動力を失う」だけで済むし、
+  // 罠を踏んだら捕まる、という絵のほうが素直。避難所に張った罠が相手を
+  // 座らせてしまうのは弱点に見えるが、**最終夜は避難所に座っても0点**なので、
+  // 血を抱えたまま椅子に貼り付けられるのはむしろ致命傷になる。
   const trap = state.traps.find((t) => t.cell === target && t.owner !== player.index);
   if (trap) {
     state.traps = state.traps.filter((t) => t !== trap);
-    player.at = origin;
-    pushTrail(state, player.index, target, origin, 'teleport');
-    stun(state, player, `${state.players[trap.owner].name} の罠に弾かれ`);
-    return true;
+    stun(state, player, `${state.players[trap.owner].name} の罠に捕まり`);
   }
 
   const cell = state.board.cells[target];
 
-  // 《強襲》を切っていれば、通り抜けたマスにいる相手を全員止める
+  // 《強襲》を切っていれば、通り抜けたマスにいる相手を仕留める。
+  //
+  // 当たる機会そのものが少ない札（相手のマスへちょうど乗る精度が要る）なので、
+  // 当たり判定を広げるのではなく一撃を重くしてある ―― 決まれば相手の血は
+  // すべて襲った側のものになる。狙って当てたときだけ盤面がひっくり返る。
   if (player.rushing) {
     for (const p of state.players) {
       if (p.index !== player.index && p.at === target) {
-        stun(state, p, `${player.name} に突き飛ばされ`);
+        killPlayer(state, p, `${player.name} に組み伏せられた`, player);
       }
     }
   }
@@ -728,10 +730,10 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
     }
     case 'rush': {
       player.rushing = true;
-      // 既に相乗りしている相手も、踏み込み直すまでもなくその場で吹き飛ばす
+      // 既に同じマスに立っている相手は、踏み込み直すまでもなくその場で仕留める
       for (const p of state.players) {
         if (p.index !== player.index && p.at === player.at) {
-          stun(state, p, `${player.name} に突き飛ばされ`);
+          killPlayer(state, p, `${player.name} に組み伏せられた`, player);
         }
       }
       pushLog(state, `${player.name} が《${spec.name}》の構えを取った。`, 'info');
@@ -786,5 +788,5 @@ export function roundTripCost(): number {
   return (RING_COUNT + 1) * 2;
 }
 
-export { CASTLE_SECTORS, VILLAGE, castleOf, cellId };
+export { CASTLE_SECTORS, VILLAGE, castleGate, castleOf, cellId };
 export type { Board };
