@@ -342,7 +342,7 @@ export class BoardView {
     const body = el('circle', { cx: 0, cy: 0, class: 'piece-body', fill: player.color });
     const label = el('text', { x: 0, y: 6, class: 'piece-label', 'text-anchor': 'middle' });
     label.textContent = String(index + 1);
-    const badgeCircle = el('circle', { cx: 0, cy: 0, r: 11 });
+    const badgeCircle = el('circle', { cx: 0, cy: 0, r: 15 });
     const badgeCount = el('text', { x: 0, y: 4, 'text-anchor': 'middle', class: 'piece-blood-count' });
     const badge = el('g', { class: 'piece-blood' });
     badge.append(badgeCircle, badgeCount);
@@ -386,7 +386,7 @@ export class BoardView {
       refs.badgeCircle.setAttribute('cx', String(badgeX));
       refs.badgeCircle.setAttribute('cy', String(badgeY));
       refs.badgeCount.setAttribute('x', String(badgeX));
-      refs.badgeCount.setAttribute('y', String(badgeY + 5));
+      refs.badgeCount.setAttribute('y', String(badgeY + 7));
       refs.badgeCount.textContent = String(player.carrying);
     } else {
       refs.badge.style.display = 'none';
