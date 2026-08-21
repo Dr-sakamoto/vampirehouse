@@ -18,7 +18,7 @@ import {
   swapTargets,
   winnerIndices,
 } from '../game/rules';
-import type { BatCard, GameConfig, GameState, Player } from '../game/types';
+import type { BatCard, BatKind, GameConfig, GameState, Player } from '../game/types';
 import { BoardView } from './board-view';
 
 type Targeting =
@@ -27,6 +27,8 @@ type Targeting =
   | { kind: 'swap'; card: BatCard };
 
 const BOT_STEP_MS = 420;
+/** カットインが画面に留まる時間 */
+const CUTIN_MS = 1100;
 
 /**
  * HUDの語彙。文章の代わりにこの記号だけで状況を伝える。
@@ -75,6 +77,10 @@ export class App {
   private targeting: Targeting = { kind: 'none' };
   private botTimer: number | null = null;
   private lastNight = 1;
+  /** まだカットインに反映していない batPlays の先頭。BatPlayEvent.seq と比較する */
+  private nextBatPlaySeq = 0;
+  private cutinQueue: { player: Player; kind: BatKind }[] = [];
+  private cutinBusy = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -107,6 +113,10 @@ export class App {
     const stage = document.createElement('div');
     stage.className = 'stage';
     stage.append(this.board.svg);
+    const cutin = document.createElement('div');
+    cutin.className = 'cutin';
+    cutin.id = 'cutin';
+    stage.append(cutin);
 
     const left = document.createElement('aside');
     left.className = 'hud hud-left';
@@ -207,6 +217,7 @@ export class App {
       showMoves ? legalMoves(this.state) : [],
       this.targetCells(),
     );
+    this.queueCutins();
     this.renderStatus();
     this.renderPlayers();
     this.renderHand();
@@ -217,6 +228,50 @@ export class App {
 
   private targetCells(): string[] {
     return [];
+  }
+
+  /**
+   * コウモリ使用のカットイン。「誰が何を使ったか」は手札のチップやログにも
+   * 出ているが、それだけだと人間もCPUも見落とす ―― 画面中央を横切る帯で
+   * 一度は必ず目に入るようにする。何枚も続けて使われたら、順番に1枚ずつ見せる。
+   */
+  private queueCutins(): void {
+    const events = this.state.batPlays.filter((e) => e.seq >= this.nextBatPlaySeq);
+    this.nextBatPlaySeq = this.state.batPlaySeq;
+    for (const event of events) {
+      this.cutinQueue.push({ player: this.state.players[event.player], kind: event.kind });
+    }
+    if (!this.cutinBusy) this.showNextCutin();
+  }
+
+  private showNextCutin(): void {
+    const next = this.cutinQueue.shift();
+    if (!next) {
+      this.cutinBusy = false;
+      return;
+    }
+    this.cutinBusy = true;
+    const { player, kind } = next;
+    const spec = BAT_SPECS[kind];
+    const node = this.q('cutin');
+    node.style.setProperty('--player-color', player.color);
+    node.innerHTML = `
+      <span class="cutin-bar">
+        ${disc(player)}
+        <span class="cutin-name">${player.name}</span>
+        <span class="cutin-verb">が</span>
+        <span class="cutin-bat"><span class="bat-icon">${spec.icon}</span>${spec.name}</span>
+        <span class="cutin-verb">を使った！</span>
+      </span>
+    `;
+    // クラスを一度外して再度付け直すことで、連続使用でもアニメーションを毎回頭から流す
+    node.classList.remove('is-visible');
+    void node.offsetWidth;
+    node.classList.add('is-visible');
+    window.setTimeout(() => {
+      node.classList.remove('is-visible');
+      window.setTimeout(() => this.showNextCutin(), 200);
+    }, CUTIN_MS);
   }
 
   /**
