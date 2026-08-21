@@ -9,8 +9,10 @@ import {
   defaultConfig,
   villageRichness,
   endTurn,
+  endTurnError,
   hunterCells,
   isSafeCell,
+  lootAmount,
   legalMoves,
   moveAllowance,
   moveTo,
@@ -39,12 +41,23 @@ function giveBat(state: GameState, playerIndex: number, kind: BatKind): string {
 /** 手番プレイヤーを指定マスへ瞬間移動（移動力は消費しない） */
 function teleport(state: GameState, playerIndex: number, cell: string): void {
   state.players[playerIndex].at = cell;
+  // 歩いて来たわけではないので足跡も引き継がない（§足跡）
+  state.players[playerIndex].startedAt = cell;
 }
 
-/** 全員がその場でターンを終える。1ラウンドぶん進む */
+/**
+ * 全員がその場でターンを終える。1ラウンドぶん進む。
+ *
+ * 「腰を据えられるのは村と自分の城だけ」（§足跡）に引っかからないよう、
+ * 開始マスを消して**動いた扱い**にしてから終える ―― 駒を動かさずに
+ * 時間だけ進めるための、テスト用の抜け道。
+ */
 function passRound(state: GameState): void {
   const players = state.players.length;
-  for (let i = 0; i < players; i++) endTurn(state);
+  for (let i = 0; i < players; i++) {
+    currentPlayer(state).startedAt = '';
+    endTurn(state);
+  }
 }
 
 describe('初期状態', () => {
@@ -113,6 +126,87 @@ describe('移動', () => {
       teleport(state, 1, state.board.castleCells[1]);
       expect(legalMoves(state)).toContain(refuge);
     }
+  });
+
+  it('足跡: 一歩でも動いたら、その手番のうちは開始マスへ戻れない', () => {
+    const start = cellId(3, 2);
+    teleport(state, 0, start);
+    moveTo(state, cellId(3, 3));
+    expect(legalMoves(state)).not.toContain(start);
+    expect(moveTo(state, start)).toBe(false);
+    // 移動力は残っている ―― 進めないのではなく、戻れないだけ
+    expect(state.players[0].movesLeft).toBe(2);
+  });
+
+  it('足跡: 村と自分の城だけは出戻りできる', () => {
+    teleport(state, 0, VILLAGE);
+    moveTo(state, cellId(1, 0));
+    expect(legalMoves(state)).toContain(VILLAGE);
+    expect(moveTo(state, VILLAGE)).toBe(true);
+
+    const castle = state.board.castleCells[0];
+    teleport(state, 0, castle);
+    state.players[0].movesLeft = 3;
+    moveTo(state, castleGate(state.board, 0));
+    expect(legalMoves(state)).toContain(castle);
+  });
+
+  it('足跡: 最短経路には一切かからない ―― 縛るのは出戻りだけ', () => {
+    // 城から村までの5歩は、どの一歩も開始マスへは戻らない
+    state.hunters = []; // ここで見たいのは足跡だけなので、ハンターには退場してもらう
+    const path = shortestPath(state.board, state.players[0].at, VILLAGE)!;
+    for (const step of path.slice(1)) {
+      if (currentPlayer(state).movesLeft === 0) {
+        currentPlayer(state).movesLeft = 3;
+      }
+      expect(legalMoves(state)).toContain(step);
+      expect(moveTo(state, step)).toBe(true);
+    }
+    expect(state.players[0].at).toBe(VILLAGE);
+  });
+
+  it('腰を据えられるのは村と自分の城だけ ―― それ以外では1歩は動く', () => {
+    teleport(state, 0, cellId(3, 2));
+    expect(endTurnError(state)).not.toBeNull();
+    endTurn(state);
+    expect(state.current).toBe(0); // 手番は終わっていない
+
+    moveTo(state, cellId(3, 3));
+    expect(endTurnError(state)).toBeNull();
+    endTurn(state);
+    expect(state.current).toBe(1);
+  });
+
+  it('村と自分の城では、一歩も動かずに手番を終えられる', () => {
+    // 城（初期位置）
+    expect(state.board.cells[state.players[0].at].kind).toBe('castle');
+    expect(endTurnError(state)).toBeNull();
+    teleport(state, 0, VILLAGE);
+    expect(endTurnError(state)).toBeNull();
+    // 他人の城は「自分の棺」ではないので居座れない（そもそも入れない）
+    teleport(state, 0, state.board.castleCells[1]);
+    expect(endTurnError(state)).not.toBeNull();
+  });
+
+  it('洞窟に座り続けることはできない ―― 篭りには毎ラウンド1歩の値段がつく', () => {
+    for (const refuge of [state.board.caveCells[0], state.board.shadeCells[0]]) {
+      teleport(state, 0, refuge);
+      expect(endTurnError(state)).not.toBeNull();
+    }
+  });
+
+  it('動けないなら居座ってよい ―― スタンで足を奪われた者は免除される', () => {
+    teleport(state, 0, state.board.caveCells[0]);
+    state.players[0].movesLeft = 0;
+    expect(legalMoves(state)).toEqual([]);
+    expect(endTurnError(state)).toBeNull();
+  });
+
+  it('空が白んだラウンドも免除 ―― 見つけた影から追い立てる規則ではない', () => {
+    teleport(state, 0, state.board.caveCells[0]);
+    expect(endTurnError(state)).not.toBeNull();
+    state.dawnPending = true;
+    expect(endTurnError(state)).toBeNull();
   });
 });
 
@@ -423,15 +517,17 @@ describe('洞窟とコウモリ', () => {
     expect(state.players[0].bats).toHaveLength(1);
   });
 
-  it('同じターン中に同じ洞窟を出入りしても2枚目は引けない', () => {
+  it('洞窟の出入りで札を刷ることはできない ―― 足跡が戻り道を塞ぐ', () => {
     const state = newGame(2);
     const cave = state.board.caveCells[0];
     const gate = state.board.cells[cave].neighbors[0];
     teleport(state, 0, gate);
     moveTo(state, cave);
-    moveTo(state, gate);
-    moveTo(state, cave);
     expect(state.players[0].bats).toHaveLength(1);
+    // 移動力は2歩残っているが、出た先から穴へは戻れない
+    expect(state.players[0].movesLeft).toBe(2);
+    expect(legalMoves(state)).not.toContain(gate);
+    expect(moveTo(state, gate)).toBe(false);
   });
 
   it('先に他プレイヤーが通った洞窟でも変わらず1枚引ける', () => {
@@ -440,8 +536,8 @@ describe('洞窟とコウモリ', () => {
     const gate = state.board.cells[cave].neighbors[0];
     teleport(state, 0, gate);
     moveTo(state, cave);
-    moveTo(state, gate); // 洞窟は定員1人なので出ておく
     endTurn(state);
+    teleport(state, 0, gate); // 洞窟は定員1人なので空けておく
     teleport(state, 1, gate);
     moveTo(state, cave);
     expect(state.players[0].bats).toHaveLength(1);
@@ -478,7 +574,8 @@ describe('コウモリの効果', () => {
   it('スタン罠: 踏んだ相手はそのマスに捕まり、足を止められる。罠は消える', () => {
     const state = newGame(2);
     const spot = cellId(1, 0);
-    teleport(state, 0, spot);
+    teleport(state, 0, VILLAGE);
+    moveTo(state, spot); // 村から1歩。踏み出した先に仕掛ける
     playBat(state, giveBat(state, 0, 'snare'));
     endTurn(state);
 
@@ -497,7 +594,8 @@ describe('コウモリの効果', () => {
   it('スタン罠: 移動の途中でも、罠のマスへ入った瞬間に発動する', () => {
     const state = newGame(2);
     const spot = cellId(1, 0);
-    teleport(state, 0, spot);
+    teleport(state, 0, VILLAGE);
+    moveTo(state, spot);
     playBat(state, giveBat(state, 0, 'snare'));
     endTurn(state);
 
@@ -516,7 +614,8 @@ describe('コウモリの効果', () => {
     // 門は城1に繋がる唯一のマス
     expect(state.board.cells[state.board.castleCells[1]].neighbors).toEqual([gate]);
 
-    teleport(state, 0, gate);
+    teleport(state, 0, cellId(RING_COUNT, 4));
+    moveTo(state, gate); // 門まで歩いてから仕掛ける
     playBat(state, giveBat(state, 0, 'snare'));
     endTurn(state);
 
@@ -577,9 +676,9 @@ describe('コウモリの効果', () => {
     playBat(state, giveBat(state, 0, 'rush'));
     moveTo(state, via);
 
-    // 血は村へ還らず、襲った側の懐に入る
-    expect(state.players[1].carrying).toBe(0);
-    expect(state.players[0].carrying).toBe(80);
+    // 奪えるのは半分だけ。残りは相手の手に残る（総量は動かない）
+    expect(state.players[1].carrying).toBe(40);
+    expect(state.players[0].carrying).toBe(40);
     expect(state.bloodPool).toBe(poolBefore);
     // 仕留めはしない ―― 城へは送り返されず、その場で足だけが止まる
     expect(state.players[1].deaths).toBe(0);
@@ -595,7 +694,7 @@ describe('コウモリの効果', () => {
     teleport(state, 1, spot);
     state.players[1].carrying = 30;
     playBat(state, giveBat(state, 0, 'rush'));
-    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[0].carrying).toBe(20); // 30の半分は10単位に丸めて20
     expect(state.players[1].stunned).toBe(true);
     expect(state.players[1].deaths).toBe(0);
   });
@@ -610,8 +709,8 @@ describe('コウモリの効果', () => {
     playBat(state, giveBat(state, 0, 'rush'));
     // 傘は陽光とハンターの肩代わりなので、差したまま残る
     expect(state.players[1].parasol).toBe(true);
-    expect(state.players[1].carrying).toBe(0);
-    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[1].carrying).toBe(10);
+    expect(state.players[0].carrying).toBe(20);
     expect(state.players[1].stunned).toBe(true);
   });
 
@@ -806,7 +905,7 @@ describe('血と得点', () => {
 });
 
 describe('仕留めた相手の血（PVP）', () => {
-  it('影渡りでハンターの前へ突き出すと、その血は突き出した側に入る', () => {
+  it('影渡りでハンターの前へ突き出すと、その血の半分が突き出した側に入る', () => {
     const state = newGame(2);
     const uid = giveBat(state, 0, 'swap');
     const hunterCell = hunterCells(state)[0];
@@ -815,10 +914,37 @@ describe('仕留めた相手の血（PVP）', () => {
     state.players[1].carrying = 30;
     const poolBefore = state.bloodPool;
     playBat(state, uid, { player: 1 });
+    // 仕留められた側は全部失うが、持ち去れるのは半分。残りは村へ還る
     expect(state.players[1].carrying).toBe(0);
-    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[0].carrying).toBe(20);
     expect(state.players[0].kills).toBe(1);
-    expect(state.bloodPool).toBe(poolBefore);
+    expect(state.bloodPool).toBe(poolBefore + 10);
+  });
+
+  it('奪い高はひとつの規則 ―― 組み伏せても仕留めても、動くのは半分', () => {
+    for (const carrying of [10, 30, 80, 250]) {
+      const pinned = newGame(2);
+      const spot = cellId(1, 0);
+      teleport(pinned, 0, spot);
+      teleport(pinned, 1, spot);
+      pinned.players[1].carrying = carrying;
+      playBat(pinned, giveBat(pinned, 0, 'rush'));
+      expect(pinned.players[0].carrying).toBe(lootAmount(carrying));
+      // 組み伏せは非殺なので、残り半分は相手の手に残ったまま
+      expect(pinned.players[1].carrying).toBe(carrying - lootAmount(carrying));
+
+      const killed = newGame(2);
+      const uid = giveBat(killed, 0, 'swap');
+      teleport(killed, 0, hunterCells(killed)[0]);
+      teleport(killed, 1, cellId(1, 0));
+      killed.players[1].carrying = carrying;
+      const poolBefore = killed.bloodPool;
+      playBat(killed, uid, { player: 1 });
+      expect(killed.players[0].carrying).toBe(lootAmount(carrying));
+      // 仕留めた側は全部失い、奪われなかったぶんは村へ還る
+      expect(killed.players[1].carrying).toBe(0);
+      expect(killed.bloodPool).toBe(poolBefore + carrying - lootAmount(carrying));
+    }
   });
 
   it('太陽やハンターに自滅した血は村へ還る（誰のものにもならない）', () => {

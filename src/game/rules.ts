@@ -85,6 +85,7 @@ export function createGame(config: GameConfig): GameState {
     score: 0,
     bats: [],
     movesLeft: 0,
+    startedAt: castleOf(board, i),
     batsPlayedThisTurn: 0,
     lootedCaveThisTurn: false,
     rushing: false,
@@ -208,6 +209,32 @@ function refugeBlocked(state: GameState, id: string, moverIndex: number): boolea
   return state.players.some((p) => p.index !== moverIndex && p.at === id);
 }
 
+/**
+ * 腰を据えてよいマスか ―― **村と自分の城だけ**。
+ *
+ * 村は血を吸うために粘る場所（引き際の判断そのもの）、城は自分の棺。
+ * この2つ以外のマスは「通る場所」であって「住む場所」ではない、というのが
+ * 移動の規則の芯にある（§足跡）。
+ */
+function isDwelling(state: GameState, player: Player, id: string): boolean {
+  const cell = state.board.cells[id];
+  if (!cell) return false;
+  if (cell.kind === 'village') return true;
+  return cell.kind === 'castle' && cell.castleOf === player.index;
+}
+
+/**
+ * 足跡 ―― 手番を始めたマスへは、一歩でも動いたら戻れない。
+ *
+ * これが無いと、洞窟の隣へ1歩出て戻るだけで**毎ターン1枚コウモリが刷れる**。
+ * 穴は陽もハンターも届かない最外リングにあるので、その蛇口は
+ * 一切のリスク無しに回り続けてしまう（`balance.md` §3）。
+ * 腰を据えてよい村と自分の城だけは、出戻りも許す。
+ */
+function lockedBehind(state: GameState, player: Player, id: string): boolean {
+  return id === player.startedAt && !isDwelling(state, player, id);
+}
+
 /** 現在の手番プレイヤーが1歩で移動できるマス */
 export function legalMoves(state: GameState): string[] {
   if (state.phase !== 'playing') return [];
@@ -217,8 +244,29 @@ export function legalMoves(state: GameState): string[] {
     const cell = state.board.cells[id];
     if (cell.kind === 'castle' && cell.castleOf !== player.index) return false;
     if (refugeBlocked(state, id, player.index)) return false;
+    if (lockedBehind(state, player, id)) return false;
     return true;
   });
+}
+
+/**
+ * この手番を終えられるか（終えられない理由を返す）。
+ *
+ * **腰を据えられるのは村と自分の城だけ。**それ以外のマスでは、動けるかぎり
+ * 必ず1歩は動く ―― 洞窟に座り続けるだけで陽もハンターも避けられる、という
+ * 「待っているのがいちばん強い」局面を盤面から無くすための規則（§足跡）。
+ *
+ * 動きたくても動けないとき（スタン・行き先がすべて塞がっている）は免除される。
+ * 空が白んだラウンドも免除 ―― 見つけた影から追い立てるための規則ではない。
+ */
+export function endTurnError(state: GameState): string | null {
+  if (state.phase !== 'playing') return null;
+  const player = currentPlayer(state);
+  if (player.at !== player.startedAt) return null;
+  if (isDwelling(state, player, player.at)) return null;
+  if (state.dawnPending) return null;
+  if (legalMoves(state).length === 0) return null;
+  return '同じマスに居座れるのは村と自分の城だけ ―― 1歩は動くこと';
 }
 
 /**
@@ -326,6 +374,8 @@ export function beginTurn(state: GameState): void {
   } else {
     player.movesLeft = moveAllowance(state, player);
   }
+  // 足跡は手番ごとに引き直す ―― ここを出たら、この手番のうちは戻れない
+  player.startedAt = player.at;
   player.batsPlayedThisTurn = 0;
   player.lootedCaveThisTurn = false;
   player.rushing = false;
@@ -383,6 +433,18 @@ function bankBlood(state: GameState, player: Player): void {
   pushLog(state, `${player.name} が血 ${carried} を持ち帰った。そのまま ${carried} 点。`, 'good');
 }
 
+/**
+ * 一口ぶんの奪い高 ―― 相手が抱えている血の**半分**（10単位に丸め、最低10）。
+ *
+ * 盤上で血が動くのはこの規則ひとつだけ。強襲で組み伏せても、影渡りでハンターの
+ * 前へ突き出しても、動くのは半分で、残りは村へ還る。固定額にすると相手の懐次第で
+ * 無意味にも致命的にもなるので、盤上の数字がいくつでも効き目が変わらない割合にしてある。
+ */
+export function lootAmount(carrying: number): number {
+  if (carrying <= 0) return 0;
+  return Math.max(10, Math.round(carrying / 2 / 10) * 10);
+}
+
 /** 血を被害者から加害者へ移す。総量は変わらない */
 function transferBlood(thief: Player, victim: Player, amount: number): void {
   const taken = Math.min(amount, victim.carrying);
@@ -412,23 +474,24 @@ function killPlayer(
     return false;
   }
   const lost = player.carrying;
-  if (killer && killer.index !== player.index && lost > 0) {
-    transferBlood(killer, player, lost);
-  } else {
-    state.bloodPool += lost;
-    player.carrying = 0;
-  }
+  // 仕留めても持ち去れるのは半分。残りは地面に染みて村へ還る（`lootAmount`）
+  const taken = killer && killer.index !== player.index ? lootAmount(lost) : 0;
+  if (taken > 0) transferBlood(killer!, player, taken);
+  state.bloodPool += player.carrying;
+  player.carrying = 0;
   player.deaths += 1;
   player.stunned = false;
   const origin = player.at;
   player.at = castleOf(state.board, player.index);
   player.movesLeft = 0;
+  // 運ばれた先では足跡が途切れる（自分で歩いた道ではない）
+  player.startedAt = player.at;
   pushTrail(state, player.index, origin, player.at, 'teleport');
   if (killer && killer.index !== player.index) killer.kills += 1;
   const spoils =
     lost > 0
-      ? killer && killer.index !== player.index
-        ? `血 ${lost} は ${killer.name} が啜り、`
+      ? taken > 0
+        ? `血 ${lost} のうち ${taken} を ${killer!.name} が啜り、残りは村へ還り、`
         : `血 ${lost} を落とし、`
       : '';
   pushLog(state, `${player.name} は${reason}。${spoils}城へ引き戻された。`, 'bad');
@@ -446,10 +509,13 @@ function killPlayer(
  * 「一夜の労働と盤上の位置を同時に消される」理不尽さだけが落ちる
  * （[`docs/balance.md`](../../docs/balance.md) §2）。
  *
- * 奪い高を半分にする案は落とした（当時はまだ、無料で相手の半分を奪う「噛みつき」が
- * 常時ある前提だった。噛みつきは以後廃止し、盤面の干渉手段は強襲に一本化した）。
- * 半分にすると札を1枚払って同じ額になり、**札が何もしない対照と得点も勝差も
- * 一致した**。カードは無料の手より重くなければ、置く意味が無い。
+ * 奪い高は**半分**（`lootAmount`）。以前ここは全額で、半分にする案は
+ * 「札が何もしない対照と得点も勝差も一致する」という実測で落としていた ―― が、
+ * あれは**無料で相手の半分を奪える「噛みつき」が常時あった頃**の結論だった。
+ * 噛みつきを廃止して干渉を強襲へ一本化したあとに測り直すと、半分でも
+ * 血は動き（31/67/101 対 対照 0）、得点も対照と全額の中間に乗る。
+ * 死に札にしていたのは半分という数字ではなく、タダで同じ額が取れる手の存在だった
+ * （[`docs/balance.md`](../../docs/balance.md) §4）。
  *
  * 足を止めるほうは残す。コウモリは締め出しの札に絞ってあり、予告ラウンドに
  * 当てれば椅子に届かなくなる ―― 血を奪われたうえで日向に置き去りにされる、
@@ -459,7 +525,7 @@ function killPlayer(
  * 即死ではなくなったので、蝙蝠傘（陽光とハンターの肩代わり）では防げない。
  */
 function pinDown(state: GameState, attacker: Player, victim: Player): void {
-  const loot = victim.carrying;
+  const loot = lootAmount(victim.carrying);
   if (loot > 0) {
     transferBlood(attacker, victim, loot);
     pushLog(
@@ -506,8 +572,8 @@ export function moveTo(state: GameState, target: string): boolean {
   // 《強襲》を切っていれば、通り抜けたマスにいる相手を組み伏せる。
   //
   // 当たる機会そのものが少ない札（相手のマスへちょうど乗る精度が要る）なので、
-  // 当たり判定を広げるのではなく一撃を重くしてある ―― 決まれば相手の血は
-  // すべて襲った側のものになる。狙って当てたときだけ盤面がひっくり返る。
+  // 当たり判定を広げるのではなく一撃を重くしてある ―― 決まれば相手はその夜の
+  // 稼ぎを丸ごと失う。ただし持ち去れるのは半分で、残りは村へ還る（`killPlayer`）。
   if (player.rushing) {
     for (const p of state.players) {
       if (p.index !== player.index && p.at === target) {
@@ -532,6 +598,8 @@ export function moveTo(state: GameState, target: string): boolean {
 
 export function endTurn(state: GameState): void {
   if (state.phase !== 'playing') return;
+  // 腰を据えられるのは村と自分の城だけ。それ以外では1歩は動く（§足跡）
+  if (endTurnError(state) !== null) return;
   const player = currentPlayer(state);
 
   // 村に留まって夜を明かすほど血が採れる ―― それが引き際の賭け
@@ -758,6 +826,8 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
       player.at = theirs;
       victim.at = mine;
       player.movesLeft = 0;
+      player.startedAt = theirs;
+      victim.startedAt = mine;
       pushTrail(state, player.index, mine, theirs, 'teleport');
       pushTrail(state, victim.index, theirs, mine, 'teleport');
       pushLog(
