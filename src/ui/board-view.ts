@@ -6,7 +6,7 @@ import {
   legalMoves,
   dawnRisk,
 } from '../game/rules';
-import type { Cell, GameState, Player, TrailStep } from '../game/types';
+import type { Cell, GameState, Hunter, Player, TrailStep } from '../game/types';
 import {
   CASTLE_RING,
   CENTER,
@@ -47,6 +47,18 @@ const WALK_GAP_MS = 140;
 const TELEPORT_PAUSE_MS = 320;
 /** 軌跡が消えるまで */
 const TRACE_FADE_MS = 1400;
+/** セクター1つぶんの角度（度）。ハンターの向きの積み増しに使う */
+const SECTOR_DEG = 45;
+
+interface HunterRefs {
+  group: SVGGElement;
+  turn: SVGGElement;
+  label: SVGTextElement;
+  /** 表示に使う「巻き戻らない」角度（度）。セクター0↔7をまたいでも逆回転して見えないよう、
+   * mod を取らずに dir 分だけ積み増していく */
+  angleDeg: number;
+  lastSector: number;
+}
 
 interface PieceRefs {
   group: SVGGElement;
@@ -65,11 +77,13 @@ export class BoardView {
   private readonly stateLayer = el('g', { class: 'layer-state' });
   private readonly ghostLayer = el('g', { class: 'layer-ghosts' });
   private readonly markerLayer = el('g', { class: 'layer-markers' });
+  private readonly hunterLayer = el('g', { class: 'layer-hunters' });
   private readonly traceLayer = el('g', { class: 'layer-trace' });
   private readonly pieceLayer = el('g', { class: 'layer-pieces' });
   private readonly stateNodes = new Map<string, SVGCircleElement>();
   private readonly glowNodes = new Map<string, SVGGraphicsElement>();
   private readonly pieces = new Map<number, PieceRefs>();
+  private readonly hunters = new Map<number, HunterRefs>();
   /** まだアニメーションに反映していない trail の先頭。TrailStep.seq と比較する */
   private nextTrailSeq = 0;
   private built = false;
@@ -87,6 +101,7 @@ export class BoardView {
       this.stateLayer,
       this.ghostLayer,
       this.markerLayer,
+      this.hunterLayer,
       this.traceLayer,
       this.pieceLayer,
     );
@@ -271,27 +286,50 @@ export class BoardView {
       this.markerLayer.append(mark);
     }
 
-    // 三角に番号を振る
+    this.renderHunters(state);
+  }
+
+  /**
+   * ハンターの三角は使い回しの駒（`g.hunter`）として持ち、位置と向きを
+   * transform で更新する。CSSの transition が滑りを作る ―― 駒（`.piece`）と同じ考え方。
+   * 向きの角度は mod せずに積み増す。セクター0↔7の境で 315°→0° のような
+   * 大きな戻り角にすると、逆回転しているように見えてしまうため
+   */
+  private renderHunters(state: GameState): void {
     state.hunters.forEach((hunter, i) => {
       const cell = state.board.cells[`r${hunter.ring}s${hunter.sector}`];
       const p = cellCenter(cell);
-      const group = el('g', { class: 'hunter' });
-      group.append(
-        el('path', {
-          d: trianglePath(p, 27, hunterFacingAngle(hunter, hunter.sector)),
-          class: 'hunter-body',
-        }),
-      );
-      const label = el('text', {
-        x: p.x,
-        y: p.y + 5,
-        class: 'hunter-label',
-        'text-anchor': 'middle',
-      });
-      label.textContent = String(i + 1);
-      group.append(label);
-      this.markerLayer.append(group);
+      const refs = this.ensureHunter(hunter, i, p);
+
+      if (hunter.sector !== refs.lastSector) {
+        refs.angleDeg += hunter.dir * SECTOR_DEG;
+        refs.lastSector = hunter.sector;
+      }
+
+      refs.group.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      refs.turn.style.transform = `rotate(${refs.angleDeg}deg)`;
     });
+  }
+
+  private ensureHunter(hunter: Hunter, index: number, at: Point): HunterRefs {
+    let refs = this.hunters.get(index);
+    if (refs) return refs;
+
+    const group = el('g', { class: 'hunter' });
+    const turn = el('g', { class: 'hunter-turn' });
+    turn.append(el('path', { d: trianglePath({ x: 0, y: 0 }, 27, 0), class: 'hunter-body' }));
+    const label = el('text', { y: 5, class: 'hunter-label', 'text-anchor': 'middle' });
+    label.textContent = String(index + 1);
+    group.append(turn, label);
+    this.hunterLayer.append(group);
+
+    const angleDeg = (hunterFacingAngle(hunter, hunter.sector) * 180) / Math.PI;
+    group.style.transform = `translate(${at.x}px, ${at.y}px)`;
+    turn.style.transform = `rotate(${angleDeg}deg)`;
+
+    refs = { group, turn, label, angleDeg, lastSector: hunter.sector };
+    this.hunters.set(index, refs);
+    return refs;
   }
 
   private ensurePiece(state: GameState, index: number): PieceRefs {

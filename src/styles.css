@@ -254,6 +254,13 @@ button.ghost { background: transparent; }
 
 /* --- ハンター。写真の金の三角と同じ色調の、動く駒 --- */
 
+/* ハンターの駒（`g.hunter`）は translate（位置）で滑り、その中の
+   `g.hunter-turn` が rotate（向き）だけを別に持つ。数字ラベルは回転させない */
+.hunter {
+  transition: transform 420ms ease;
+  pointer-events: none;
+}
+.hunter-turn { transition: transform 420ms ease; }
 .hunter-body { fill: var(--hunter); stroke: #4a3a10; stroke-width: 4; stroke-linejoin: round; }
 .hunter-label {
   font-size: 15px;
