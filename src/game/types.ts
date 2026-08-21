@@ -105,6 +105,13 @@ export interface LogEntry {
   tone: 'info' | 'good' | 'bad' | 'warn';
 }
 
+/** コウモリ使用1回ぶんの記録（演出用）。誰が何を使ったかをUIのカットインへ渡す */
+export interface BatPlayEvent {
+  seq: number;
+  player: number;
+  kind: BatKind;
+}
+
 export interface GameConfig {
   playerCount: number;
   /** 各プレイヤーが人間かボットか */
@@ -155,5 +162,8 @@ export interface GameState {
   /** 駒移動の記録（演出用）。直近のみ保持する */
   trail: TrailStep[];
   trailSeq: number;
+  /** コウモリ使用の記録（演出用）。直近のみ保持する */
+  batPlays: BatPlayEvent[];
+  batPlaySeq: number;
   rngState: number;
 }

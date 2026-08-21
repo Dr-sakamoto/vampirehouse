@@ -119,6 +119,8 @@ export function createGame(config: GameConfig): GameState {
     lastBurned: [],
     trail: [],
     trailSeq: 0,
+    batPlays: [],
+    batPlaySeq: 0,
     rngState: shuffled.state,
   };
 
@@ -145,6 +147,12 @@ function pushTrail(
 function pushLog(state: GameState, text: string, tone: LogEntry['tone'] = 'info'): void {
   state.log.push({ round: state.round, night: state.night, text, tone });
   if (state.log.length > 200) state.log.splice(0, state.log.length - 200);
+}
+
+/** コウモリ使用を1件記録する（UIのカットイン演出用）。誰が何を使ったかだけを持つ */
+function pushBatPlay(state: GameState, player: number, kind: BatKind): void {
+  state.batPlays.push({ seq: state.batPlaySeq++, player, kind });
+  if (state.batPlays.length > 200) state.batPlays.splice(0, state.batPlays.length - 200);
 }
 
 // ---------------------------------------------------------------- 参照系
@@ -651,6 +659,7 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
   if (batPlayError(state, card.kind) !== null) return false;
 
   const spec = BAT_SPECS[card.kind];
+  pushBatPlay(state, player.index, card.kind);
 
   switch (card.kind) {
     case 'dash': {

@@ -40,8 +40,8 @@ export interface BoardViewOptions {
  * その上に、当たり判定と状態表示を兼ねる円を重ねる（`geometry.ts` が座標計算）。
  */
 /** 1歩の移動アニメーションにかける時間と、次の一歩までの間 */
-const WALK_MS = 260;
-const WALK_GAP_MS = 90;
+const WALK_MS = 380;
+const WALK_GAP_MS = 140;
 /** 瞬間移動（誘導・影渡り・死亡での帰還）の一時停止。軌跡は引かない */
 const TELEPORT_PAUSE_MS = 320;
 /** 軌跡が消えるまで */
