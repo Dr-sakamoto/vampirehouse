@@ -87,7 +87,6 @@ export function createGame(config: GameConfig): GameState {
     movesLeft: 0,
     batsPlayedThisTurn: 0,
     lootedCaveThisTurn: false,
-    bitThisTurn: false,
     rushing: false,
     stunned: false,
     parasol: false,
@@ -329,7 +328,6 @@ export function beginTurn(state: GameState): void {
   }
   player.batsPlayedThisTurn = 0;
   player.lootedCaveThisTurn = false;
-  player.bitThisTurn = false;
   player.rushing = false;
 }
 
@@ -385,18 +383,6 @@ function bankBlood(state: GameState, player: Player): void {
   pushLog(state, `${player.name} が血 ${carried} を持ち帰った。そのまま ${carried} 点。`, 'good');
 }
 
-/**
- * 一口ぶんの奪い高。相手が抱えている血の半分（10単位に丸める）。
- *
- * 血が「本数」だった頃、噛みつきは1本＝おおむね相手の持ち分の半分を奪っていた。
- * 血が点そのものになった今、固定額にすると相手の懐次第で無意味にも致命的にもなるので、
- * 当時の割合をそのまま規則にした。盤上の数字がいくつになっても効き目が変わらない。
- */
-export function biteAmount(carrying: number): number {
-  if (carrying <= 0) return 0;
-  return Math.max(10, Math.round(carrying / 2 / 10) * 10);
-}
-
 /** 血を被害者から加害者へ移す。総量は変わらない */
 function transferBlood(thief: Player, victim: Player, amount: number): void {
   const taken = Math.min(amount, victim.carrying);
@@ -450,32 +436,6 @@ function killPlayer(
 }
 
 /**
- * 他プレイヤーのいるマスへ踏み込んだときの噛みつき。血を1つ奪う。1ターンに1回まで。
- * 「盤上で相手と同じマスに立つ」こと自体に意味を持たせる、常時使える干渉手段
- * ―― 血を積んだ者を帰り道で待ち伏せる、という形の PVP。
- *
- * 城と村では起こらない。城は各プレイヤーの聖域であり、村は全員が必ず立ち寄る
- * 収穫地点なので、ここを狩り場にすると先に着いた者がただ搾取されるだけになる。
- */
-function bite(state: GameState, attacker: Player, cellIdAt: string): void {
-  if (attacker.bitThisTurn) return;
-  const kind = state.board.cells[cellIdAt].kind;
-  if (kind === 'castle' || kind === 'village') return;
-  const prey = state.players
-    .filter((p) => p.index !== attacker.index && p.at === cellIdAt && p.carrying > 0)
-    .sort((a, b) => b.carrying - a.carrying)[0];
-  if (!prey) return;
-  const taken = biteAmount(prey.carrying);
-  transferBlood(attacker, prey, taken);
-  attacker.bitThisTurn = true;
-  pushLog(
-    state,
-    `${attacker.name} が ${prey.name} に噛みつき、血 ${taken} を奪った（運搬中 ${attacker.carrying}）。`,
-    'bad',
-  );
-}
-
-/**
  * 《強襲》が当たったときの処理 ―― 相手を組み伏せ、抱えていた血をすべて奪い、
  * その場に押さえて足を止める。仕留めはしない。
  *
@@ -486,8 +446,9 @@ function bite(state: GameState, attacker: Player, cellIdAt: string): void {
  * 「一夜の労働と盤上の位置を同時に消される」理不尽さだけが落ちる
  * （[`docs/balance.md`](../../docs/balance.md) §2）。
  *
- * 奪い高を半分にする案は落とした。噛みつきが無料で半分を取る以上
- * （§6）、札を1枚払って同じ額になり、**札が何もしない対照と得点も勝差も
+ * 奪い高を半分にする案は落とした（当時はまだ、無料で相手の半分を奪う「噛みつき」が
+ * 常時ある前提だった。噛みつきは以後廃止し、盤面の干渉手段は強襲に一本化した）。
+ * 半分にすると札を1枚払って同じ額になり、**札が何もしない対照と得点も勝差も
  * 一致した**。カードは無料の手より重くなければ、置く意味が無い。
  *
  * 足を止めるほうは残す。コウモリは締め出しの札に絞ってあり、予告ラウンドに
@@ -554,9 +515,6 @@ export function moveTo(state: GameState, target: string): boolean {
       }
     }
   }
-
-  // 先客がいれば噛みつく（1ターン1回）
-  bite(state, player, target);
 
   // 自分の城に入ったら血が得点になる
   bankBlood(state, player);

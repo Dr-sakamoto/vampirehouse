@@ -3,7 +3,6 @@ import { RING_COUNT, VILLAGE, castleGate, cellId, shortestPath } from './board';
 import { BAT_SPECS } from './bats';
 import {
   batPlayError,
-  biteAmount,
   dawnAnnounced,
   createGame,
   currentPlayer,
@@ -242,12 +241,11 @@ describe('移動力', () => {
   it('移動力はターン開始時に確定し、ターン中に血を得ても変わらない', () => {
     const state = newGame(2);
     state.players[0].carrying = 0;
-    // 噛みついて血を積んでも、足の速さは変わらない
     const spot = cellId(1, 0);
     teleport(state, 0, cellId(2, 0));
-    teleport(state, 1, spot);
-    state.players[1].carrying = 40;
     expect(currentPlayer(state).movesLeft).toBe(3);
+    // 移動の途中で血を得ても、足の速さはターン開始時のまま
+    state.players[0].carrying = 20;
     moveTo(state, spot);
     expect(state.players[0].carrying).toBe(20);
     expect(currentPlayer(state).movesLeft).toBe(2);
@@ -804,65 +802,6 @@ describe('血と得点', () => {
     teleport(state, 0, VILLAGE);
     endTurn(state);
     expect(state.players[0].carrying).toBe(30);
-  });
-});
-
-describe('噛みつき（PVP）', () => {
-  it('相手のいるマスへ踏み込むと血の半分を奪う', () => {
-    const state = newGame(2);
-    const spot = cellId(1, 0);
-    teleport(state, 1, spot);
-    state.players[1].carrying = 60;
-    teleport(state, 0, VILLAGE);
-    moveTo(state, spot);
-    expect(state.players[0].carrying).toBe(30);
-    expect(state.players[0].stolen).toBe(30);
-    expect(state.players[1].carrying).toBe(30);
-  });
-
-  it('奪い高は10単位に丸められ、最低でも10は奪う', () => {
-    expect(biteAmount(0)).toBe(0);
-    expect(biteAmount(10)).toBe(10);
-    expect(biteAmount(50)).toBe(30);
-    expect(biteAmount(60)).toBe(30);
-    expect(biteAmount(100)).toBe(50);
-  });
-
-  it('噛みつけるのは1ターンに1回まで', () => {
-    const state = newGame(3);
-    const a = cellId(1, 0);
-    const b = cellId(1, 1);
-    teleport(state, 1, a);
-    teleport(state, 2, b);
-    state.players[1].carrying = 40;
-    state.players[2].carrying = 40;
-    teleport(state, 0, VILLAGE);
-    moveTo(state, a);
-    moveTo(state, b);
-    expect(state.players[0].carrying).toBe(20);
-    expect(state.players[2].carrying).toBe(40);
-  });
-
-  it('血を持たない相手には噛みついても何も起きない', () => {
-    const state = newGame(2);
-    const spot = cellId(1, 0);
-    teleport(state, 1, spot);
-    teleport(state, 0, VILLAGE);
-    moveTo(state, spot);
-    expect(state.players[0].carrying).toBe(0);
-    expect(state.players[0].bitThisTurn).toBe(false);
-  });
-
-  it('城の中は噛みつかれない', () => {
-    const state = newGame(2);
-    // 自分の城には他人が入れないので、噛みつきの対象になり得るのは城の外だけ
-    const castle = state.board.castleCells[0];
-    state.players[1].carrying = 2;
-    teleport(state, 1, castle);
-    teleport(state, 0, state.board.cells[castle].neighbors[0]);
-    moveTo(state, castle);
-    expect(state.players[1].carrying).toBe(2);
-    expect(state.players[0].carrying).toBe(0);
   });
 });
 
