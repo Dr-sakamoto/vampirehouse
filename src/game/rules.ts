@@ -433,6 +433,18 @@ function bankBlood(state: GameState, player: Player): void {
   pushLog(state, `${player.name} が血 ${carried} を持ち帰った。そのまま ${carried} 点。`, 'good');
 }
 
+/**
+ * 一口ぶんの奪い高 ―― 相手が抱えている血の**半分**（10単位に丸め、最低10）。
+ *
+ * 盤上で血が動くのはこの規則ひとつだけ。強襲で組み伏せても、影渡りでハンターの
+ * 前へ突き出しても、動くのは半分で、残りは村へ還る。固定額にすると相手の懐次第で
+ * 無意味にも致命的にもなるので、盤上の数字がいくつでも効き目が変わらない割合にしてある。
+ */
+export function lootAmount(carrying: number): number {
+  if (carrying <= 0) return 0;
+  return Math.max(10, Math.round(carrying / 2 / 10) * 10);
+}
+
 /** 血を被害者から加害者へ移す。総量は変わらない */
 function transferBlood(thief: Player, victim: Player, amount: number): void {
   const taken = Math.min(amount, victim.carrying);
@@ -462,12 +474,11 @@ function killPlayer(
     return false;
   }
   const lost = player.carrying;
-  if (killer && killer.index !== player.index && lost > 0) {
-    transferBlood(killer, player, lost);
-  } else {
-    state.bloodPool += lost;
-    player.carrying = 0;
-  }
+  // 仕留めても持ち去れるのは半分。残りは地面に染みて村へ還る（`lootAmount`）
+  const taken = killer && killer.index !== player.index ? lootAmount(lost) : 0;
+  if (taken > 0) transferBlood(killer!, player, taken);
+  state.bloodPool += player.carrying;
+  player.carrying = 0;
   player.deaths += 1;
   player.stunned = false;
   const origin = player.at;
@@ -479,8 +490,8 @@ function killPlayer(
   if (killer && killer.index !== player.index) killer.kills += 1;
   const spoils =
     lost > 0
-      ? killer && killer.index !== player.index
-        ? `血 ${lost} は ${killer.name} が啜り、`
+      ? taken > 0
+        ? `血 ${lost} のうち ${taken} を ${killer!.name} が啜り、残りは村へ還り、`
         : `血 ${lost} を落とし、`
       : '';
   pushLog(state, `${player.name} は${reason}。${spoils}城へ引き戻された。`, 'bad');
@@ -498,10 +509,13 @@ function killPlayer(
  * 「一夜の労働と盤上の位置を同時に消される」理不尽さだけが落ちる
  * （[`docs/balance.md`](../../docs/balance.md) §2）。
  *
- * 奪い高を半分にする案は落とした（当時はまだ、無料で相手の半分を奪う「噛みつき」が
- * 常時ある前提だった。噛みつきは以後廃止し、盤面の干渉手段は強襲に一本化した）。
- * 半分にすると札を1枚払って同じ額になり、**札が何もしない対照と得点も勝差も
- * 一致した**。カードは無料の手より重くなければ、置く意味が無い。
+ * 奪い高は**半分**（`lootAmount`）。以前ここは全額で、半分にする案は
+ * 「札が何もしない対照と得点も勝差も一致する」という実測で落としていた ―― が、
+ * あれは**無料で相手の半分を奪える「噛みつき」が常時あった頃**の結論だった。
+ * 噛みつきを廃止して干渉を強襲へ一本化したあとに測り直すと、半分でも
+ * 血は動き（31/67/101 対 対照 0）、得点も対照と全額の中間に乗る。
+ * 死に札にしていたのは半分という数字ではなく、タダで同じ額が取れる手の存在だった
+ * （[`docs/balance.md`](../../docs/balance.md) §4）。
  *
  * 足を止めるほうは残す。コウモリは締め出しの札に絞ってあり、予告ラウンドに
  * 当てれば椅子に届かなくなる ―― 血を奪われたうえで日向に置き去りにされる、
@@ -511,7 +525,7 @@ function killPlayer(
  * 即死ではなくなったので、蝙蝠傘（陽光とハンターの肩代わり）では防げない。
  */
 function pinDown(state: GameState, attacker: Player, victim: Player): void {
-  const loot = victim.carrying;
+  const loot = lootAmount(victim.carrying);
   if (loot > 0) {
     transferBlood(attacker, victim, loot);
     pushLog(

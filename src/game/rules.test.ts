@@ -12,6 +12,7 @@ import {
   endTurnError,
   hunterCells,
   isSafeCell,
+  lootAmount,
   legalMoves,
   moveAllowance,
   moveTo,
@@ -675,9 +676,9 @@ describe('コウモリの効果', () => {
     playBat(state, giveBat(state, 0, 'rush'));
     moveTo(state, via);
 
-    // 血は村へ還らず、襲った側の懐に入る
-    expect(state.players[1].carrying).toBe(0);
-    expect(state.players[0].carrying).toBe(80);
+    // 奪えるのは半分だけ。残りは相手の手に残る（総量は動かない）
+    expect(state.players[1].carrying).toBe(40);
+    expect(state.players[0].carrying).toBe(40);
     expect(state.bloodPool).toBe(poolBefore);
     // 仕留めはしない ―― 城へは送り返されず、その場で足だけが止まる
     expect(state.players[1].deaths).toBe(0);
@@ -693,7 +694,7 @@ describe('コウモリの効果', () => {
     teleport(state, 1, spot);
     state.players[1].carrying = 30;
     playBat(state, giveBat(state, 0, 'rush'));
-    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[0].carrying).toBe(20); // 30の半分は10単位に丸めて20
     expect(state.players[1].stunned).toBe(true);
     expect(state.players[1].deaths).toBe(0);
   });
@@ -708,8 +709,8 @@ describe('コウモリの効果', () => {
     playBat(state, giveBat(state, 0, 'rush'));
     // 傘は陽光とハンターの肩代わりなので、差したまま残る
     expect(state.players[1].parasol).toBe(true);
-    expect(state.players[1].carrying).toBe(0);
-    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[1].carrying).toBe(10);
+    expect(state.players[0].carrying).toBe(20);
     expect(state.players[1].stunned).toBe(true);
   });
 
@@ -904,7 +905,7 @@ describe('血と得点', () => {
 });
 
 describe('仕留めた相手の血（PVP）', () => {
-  it('影渡りでハンターの前へ突き出すと、その血は突き出した側に入る', () => {
+  it('影渡りでハンターの前へ突き出すと、その血の半分が突き出した側に入る', () => {
     const state = newGame(2);
     const uid = giveBat(state, 0, 'swap');
     const hunterCell = hunterCells(state)[0];
@@ -913,10 +914,37 @@ describe('仕留めた相手の血（PVP）', () => {
     state.players[1].carrying = 30;
     const poolBefore = state.bloodPool;
     playBat(state, uid, { player: 1 });
+    // 仕留められた側は全部失うが、持ち去れるのは半分。残りは村へ還る
     expect(state.players[1].carrying).toBe(0);
-    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[0].carrying).toBe(20);
     expect(state.players[0].kills).toBe(1);
-    expect(state.bloodPool).toBe(poolBefore);
+    expect(state.bloodPool).toBe(poolBefore + 10);
+  });
+
+  it('奪い高はひとつの規則 ―― 組み伏せても仕留めても、動くのは半分', () => {
+    for (const carrying of [10, 30, 80, 250]) {
+      const pinned = newGame(2);
+      const spot = cellId(1, 0);
+      teleport(pinned, 0, spot);
+      teleport(pinned, 1, spot);
+      pinned.players[1].carrying = carrying;
+      playBat(pinned, giveBat(pinned, 0, 'rush'));
+      expect(pinned.players[0].carrying).toBe(lootAmount(carrying));
+      // 組み伏せは非殺なので、残り半分は相手の手に残ったまま
+      expect(pinned.players[1].carrying).toBe(carrying - lootAmount(carrying));
+
+      const killed = newGame(2);
+      const uid = giveBat(killed, 0, 'swap');
+      teleport(killed, 0, hunterCells(killed)[0]);
+      teleport(killed, 1, cellId(1, 0));
+      killed.players[1].carrying = carrying;
+      const poolBefore = killed.bloodPool;
+      playBat(killed, uid, { player: 1 });
+      expect(killed.players[0].carrying).toBe(lootAmount(carrying));
+      // 仕留めた側は全部失い、奪われなかったぶんは村へ還る
+      expect(killed.players[1].carrying).toBe(0);
+      expect(killed.bloodPool).toBe(poolBefore + carrying - lootAmount(carrying));
+    }
   });
 
   it('太陽やハンターに自滅した血は村へ還る（誰のものにもならない）', () => {
