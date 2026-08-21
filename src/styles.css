@@ -374,6 +374,7 @@ button.ghost { background: transparent; }
 .legend-list { padding-left: 0 !important; list-style: none; }
 .legend-list li { display: flex; align-items: center; gap: 8px; }
 .legend-list .stat { font-size: 17px; }
+.legend-boxes { display: inline-flex; gap: 3px; flex: none; }
 .help-close {
   position: absolute;
   top: 14px;
@@ -530,26 +531,57 @@ button.ghost { background: transparent; }
   align-items: center;
   gap: 6px 14px;
 }
-.gauge { display: inline-flex; align-items: center; gap: 6px; }
-.gauge-icon { font-size: 15px; line-height: 1; }
-.gauge-night { --pip: #b9a7ff; }
-.gauge-dawn { --pip: var(--sun); }
-.gauge-text {
+/*
+ * 進捗（全何夜のうち何夜目）と、1夜の中のいま（昼夜のサイクル）は
+ * 別のスケールなので、形からして別物にする ―― 前者は☑ボックス、
+ * 後者は月と太陽。天体アイコンが出てくるのはサイクル側だけ。
+ */
+
+/* --- ゲーム全体の進捗：消化した夜のチェックボックス --- */
+.progress { display: inline-flex; align-items: center; gap: 5px; }
+.progress-count {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.progress-max { font-size: 11px; font-weight: 600; color: var(--muted); }
+.progress-unit { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.boxes { display: inline-flex; gap: 3px; }
+.box {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--edge);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 900;
+  font-style: normal;
+  line-height: 1;
+  color: transparent;
+}
+/* 済んだ夜 */
+.box.is-done { background: #b9a7ff; border-color: #b9a7ff; color: var(--night-0); }
+/* いま進行中の夜 ―― まだ☑は付かないが、どこにいるかは分かる */
+.box.is-current { border-color: #b9a7ff; box-shadow: inset 0 0 0 2px rgb(185 167 255 / 0.3); }
+
+/* --- 1夜の中のいま：🌙 満ちた月 → 🌘 欠けた月 → 🌅 空が白む --- */
+.cycle { display: inline-flex; align-items: center; gap: 6px; --pip: #b9a7ff; }
+.cycle-icon { font-size: 16px; line-height: 1; }
+.cycle-text {
   font-size: 13px;
   font-weight: 800;
   color: var(--text);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.gauge-max { font-size: 11px; font-weight: 600; color: var(--muted); }
-/* 確定の夜が尽きたあとは、残りラウンド数ではなく「毎ラウンドの確率」を出す */
-.gauge-dawn .risk {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--sun);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
+/* 確定の夜が尽きたら、残りラウンド数ではなく「毎ラウンドの確率」を出す */
+.cycle.is-waning { --pip: var(--sun); }
+.cycle.is-waning .cycle-text { color: var(--sun); }
+.cycle.is-dawn .cycle-text { color: var(--sun); }
+.cycle.is-day .cycle-text { color: var(--muted); }
+
 .status .stat-blood b { font-size: 15px; }
 .mult {
   font-style: normal;
@@ -561,12 +593,12 @@ button.ghost { background: transparent; }
   padding: 1px 7px;
 }
 
-/* 夜明けが次のラウンドに迫ったら、☀ゲージが脈打つ。文章では言わない */
+/* 夜明けが賭けに入ったら、サイクル表示が脈打つ。文章では言わない */
 .status.is-urgent { border-color: var(--sun); box-shadow: 0 0 0 1px rgb(255 179 71 / 0.25); }
-.status.is-urgent .gauge-dawn { animation: sunrise 1.4s ease-in-out infinite; }
+.status.is-urgent .cycle { animation: sunrise 1.4s ease-in-out infinite; }
 /* 空が白んだ ―― 賭けは終わり、このラウンドの終わりに必ず朝が来る */
 .status.is-dawn { border-color: var(--sun); background: rgb(255 179 71 / 0.12); box-shadow: 0 0 0 2px rgb(255 179 71 / 0.4); }
-.status.is-dawn .gauge-dawn { animation: sunrise 0.7s ease-in-out infinite; }
+.status.is-dawn .cycle { animation: sunrise 0.7s ease-in-out infinite; }
 .status.is-over { border-color: #6a5f8f; }
 @keyframes sunrise {
   0%, 100% { opacity: 0.45; }

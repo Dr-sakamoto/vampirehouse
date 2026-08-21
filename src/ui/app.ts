@@ -38,6 +38,13 @@ const CUTIN_MS = 1900;
  */
 const ICON = {
   night: '🌙',
+  /** 欠けゆく月＝確定の夜が尽き、毎ラウンド賭けに入った状態 */
+  waning: '🌘',
+  /**
+   * 太陽。1夜のサイクルでは「空が白んだ／明けた」、プレイヤー欄では「陽の下」。
+   * どちらも意味は同じ ―― 陽が出れば焼ける。
+   * （日の出の絵文字 🌅 は16pxだと潰れて月と見分けがつかないので使わない）
+   */
   dawn: '☀',
   blood: '🩸',
   bat: '🦇',
@@ -61,6 +68,20 @@ const ICON = {
 /** 数を「点いた粒」で見せる。読まずに残量が分かる */
 function pips(total: number, on: number): string {
   return Array.from({ length: total }, (_, i) => `<i class="${i < on ? 'on' : ''}"></i>`).join('');
+}
+
+/**
+ * ゲーム全体の進捗＝消化した夜のチェックボックス。
+ *
+ * ここに月や太陽を出さない ―― 天体のアイコンは「1夜の中のいま」を指すものと
+ * 決めてあり、同じ絵で違うスケール（全4夜 / この夜の残り）を測ると必ず混ざる。
+ * 全体の進行はただの消化数なので、数字と☑だけで足りる。
+ */
+function boxes(total: number, done: number, current: number): string {
+  return Array.from({ length: total }, (_, i) => {
+    const cls = i < done ? 'is-done' : i === current ? 'is-current' : '';
+    return `<i class="box ${cls}">${i < done ? '✓' : ''}</i>`;
+  }).join('');
 }
 
 /** プレイヤーの識別子は盤面のコマと同じ「色つきの番号」 */
@@ -186,7 +207,7 @@ export class App {
         <li><b>目的</b> 中心の村（${ICON.blood}）で血を吸い、四隅の自分の城（${ICON.castle}）へ持ち帰る。抱えた血の数字がそのまま得点 ―― <b>持ち帰るまでは0点</b>。</li>
         <li><b>移動</b> 毎ターン ${this.state.config.baseMove} 歩。同心円に沿って横へ、放射線に沿って内外へ。</li>
         <li><b>吸血</b> 村でターンを終えるたびに血を吸える。いくつ出るかは振ってみるまで分からない。抱えても足は鈍らない。</li>
-        <li><b>${ICON.dawn} 夜明け</b> 最初の数ラウンドは必ず夜が続く（🌙ゲージ）。それを過ぎると毎ラウンド確率で空が白み（<b>%表示</b>）、白んだら（<b>「今」</b>表示）そのラウンドの終わりに必ず朝が来る。避難所（${ICON.shade}/${ICON.bat}）か城にいない者は焼かれ、抱えた血をすべて失う。</li>
+        <li><b>${ICON.dawn} 夜明け</b> 1つの夜は <b>${ICON.night} → ${ICON.waning} → ${ICON.dawn}</b> と移る。最初の数ラウンドは必ず夜（${ICON.night}）、それを過ぎると毎ラウンド確率で空が白み（${ICON.waning}・%表示）、白んだら（${ICON.dawn}）そのラウンドの終わりに必ず朝が来る。避難所（${ICON.shade}/${ICON.bat}）か城にいない者は焼かれ、抱えた血をすべて失う。</li>
         <li><b>${ICON.hunter} ハンター</b> リング2を周回する。触れれば即死。次の一歩は盤面に予告される。</li>
         <li><b>${ICON.bat} 洞窟</b> 最外リングの左右だけ。通るとコウモリ（発展カード）を引ける。</li>
         <li><b>決着</b> 全 ${this.state.config.totalNights} 夜が明けたら終わり。最終夜は村の血が濃くなる。</li>
@@ -200,6 +221,10 @@ export class App {
       </ul>
       <h3>HUDの記号</h3>
       <ul class="legend-list">
+        <li><span class="legend-boxes">${boxes(4, 1, 1)}</span> ゲーム全体の進捗 ―― 消化した夜の数</li>
+        <li><span class="stat">${ICON.night}</span> この夜はまだ確定で夜（残りラウンド数を表示）</li>
+        <li><span class="stat">${ICON.waning}</span> 確定の夜は尽きた ―― 毎ラウンド、表示の確率で空が白む</li>
+        <li><span class="stat">${ICON.dawn}</span> 空が白んだ ―― このラウンドの終わりに必ず朝</li>
         <li><span class="stat safe">${ICON.shade}</span> 夜明けが来ても安全</li>
         <li><span class="stat exposed">${ICON.dawn}</span> 陽の下 ―― 夜明けが来れば灰になる</li>
         <li><span class="stat">☂</span> 蝙蝠傘を差している（即死を1回肩代わり）</li>
@@ -346,8 +371,15 @@ export class App {
   }
 
   /**
-   * 夜・夜明け・血の3つのゲージだけ。数えるのは粒であって文字ではない。
-   * 「あと1ラウンドで夜明け」は文章ではなく、☀ゲージの点滅で伝わる。
+   * 状況は「別々のスケール」を別々の形で見せる。
+   *
+   * - **全体の進捗**（第何夜 / 全何夜）は ☑ ボックス。天体は使わない。
+   * - **この夜のいま**（昼夜のサイクル）は月と太陽のモチーフ。
+   *   🌙 満ちた月＝まだ確定で夜 → 🌘 欠けた月＝毎ラウンドの賭け → 🌅 空が白んだ。
+   *
+   * 以前はどちらも天体アイコン（🌙と☀）で、しかも片方が全4夜、片方が
+   * この夜の残りを指していた ―― 同じ絵で違う物差しを測っていたので、
+   * どちらがゲーム全体の進行なのか読み取れなかった。
    */
   private renderStatus(): void {
     const s = this.state;
@@ -357,36 +389,49 @@ export class App {
     const risk = over ? 0 : dawnRisk(s);
     const announced = !over && dawnAnnounced(s);
     const finale = isFinalNight(s);
+    const total = s.config.totalNights;
+    const pct = Math.round(risk * 100);
+
+    // 1夜の中のどこにいるか。月が満ちている間は安全、欠ければ賭け、陽が覗けば終わり
+    const cycle = over
+      ? { icon: ICON.dawn, cls: 'is-day', text: '明けた', title: '陽が昇りきった' }
+      : announced
+        ? {
+            icon: ICON.dawn,
+            cls: 'is-dawn',
+            text: 'このRの終わりに朝',
+            title: '空が白んだ ―― このラウンドの終わりに必ず朝が来る。避難所か城へ',
+          }
+        : risk > 0
+          ? {
+              icon: ICON.waning,
+              cls: 'is-waning',
+              text: `${pct}%で夜明け`,
+              title: `確定の夜は尽きた。このラウンドの終わりに ${pct}% で空が白む`,
+            }
+          : {
+              icon: ICON.night,
+              cls: 'is-night',
+              text: `あと${safeLeft}Rは夜`,
+              title: `あと ${safeLeft} ラウンドは朝の兆しも出ない。そのあとは毎ラウンド ${Math.round(
+                s.config.dawnChance * 100,
+              )}%`,
+            };
 
     // 空が白んだら急ぐどころではない ―― このラウンドの終わりに必ず朝が来る
     node.className = `status${over ? ' is-over' : announced ? ' is-dawn' : risk > 0 ? ' is-urgent' : ''}`;
     node.innerHTML = `
-      <span class="gauge gauge-night" title="${
-        over ? `全 ${s.config.totalNights} 夜が明けた` : `第 ${s.night} 夜 / 全 ${s.config.totalNights} 夜`
+      <span class="progress" title="${
+        over ? `全 ${total} 夜が明けた` : `第 ${s.night} 夜 / 全 ${total} 夜`
       }">
-        <span class="gauge-icon">${ICON.night}</span>
-        <b class="gauge-text">${over ? s.config.totalNights : s.night}<span class="gauge-max">/${s.config.totalNights}</span></b>
-        <span class="pips">${pips(s.config.totalNights, over ? s.config.totalNights : s.night)}</span>
+        <b class="progress-count">${over ? total : s.night}<span class="progress-max">/${total}</span></b>
+        <span class="progress-unit">夜</span>
+        <span class="boxes">${boxes(total, over ? total : s.night - 1, over ? -1 : s.night - 1)}</span>
       </span>
-      <span class="gauge gauge-dawn" title="${
-        over
-          ? '陽が昇りきった'
-          : announced
-            ? '空が白んだ ―― このラウンドの終わりに必ず朝が来る。避難所か城へ'
-            : risk > 0
-              ? `確定の夜は尽きた。このラウンドの終わりに ${Math.round(risk * 100)}% で空が白む`
-              : `あと ${safeLeft} ラウンドは朝の兆しも出ない。そのあとは毎ラウンド ${Math.round(
-                  s.config.dawnChance * 100,
-                )}%`
-      }">
-        <span class="gauge-icon">${ICON.dawn}</span>
-        ${
-          announced
-            ? '<b class="risk">今夜が明ける</b>'
-            : risk > 0
-              ? `<b class="risk">${Math.round(risk * 100)}%で夜明け</b>`
-              : `<b class="gauge-text">あと${safeLeft}R安全</b><span class="pips">${pips(s.config.safeRounds, safeLeft)}</span>`
-        }
+      <span class="cycle ${cycle.cls}" title="${cycle.title}">
+        <span class="cycle-icon">${cycle.icon}</span>
+        <b class="cycle-text">${cycle.text}</b>
+        ${safeLeft > 0 && !over ? `<span class="pips">${pips(s.config.safeRounds, safeLeft)}</span>` : ''}
       </span>
       <span class="stat stat-blood" title="${over ? '村に残った血' : '村に残っている血'} ${s.bloodPool}">
         <span class="stat-icon">${ICON.blood}</span><b>${s.bloodPool}</b>
