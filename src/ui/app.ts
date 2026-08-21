@@ -7,6 +7,7 @@ import {
   dawnAnnounced,
   defaultConfig,
   endTurn,
+  endTurnError,
   isFinalNight,
   isSafeCell,
   legalMoves,
@@ -328,7 +329,7 @@ export class App {
     hint.title = `このターンあと ${playsLeft} 枚まで使える`;
 
     if (me.bats.length === 0) {
-      hand.innerHTML = `<p class="empty" title="洞窟（${ICON.bat}）を通れば2枚引ける">${ICON.bat}<b>0</b></p>`;
+      hand.innerHTML = `<p class="empty" title="洞窟（${ICON.bat}）を通るたびに1枚引ける">${ICON.bat}<b>0</b></p>`;
       return;
     }
 
@@ -405,6 +406,8 @@ export class App {
 
     const atVillage = s.board.cells[me.at].kind === 'village';
     const gain = atVillage && s.bloodPool > 0;
+    // 腰を据えられるのは村と自分の城だけ。それ以外では1歩は動く（§足跡）
+    const squatting = endTurnError(s);
 
     const info = document.createElement('div');
     info.className = 'turn-info';
@@ -425,13 +428,19 @@ export class App {
     const suck = suckRange(s);
     const end = document.createElement('button');
     end.className = 'primary';
+    end.disabled = squatting !== null;
     // 何本吸えるかは振ってみるまで分からない。幅だけ見せて、残るかどうかを選ばせる
-    end.title = gain
-      ? `ここでターンを終えると血を ${suck.min}〜${suck.max} 吸える（平均 ${suck.mean.toFixed(1)}）`
-      : 'ターン終了';
-    end.innerHTML = `${
-      gain ? `<span class="btn-gain">${ICON.blood}+${suck.min}〜${suck.max}</span>` : ''
-    }<span class="btn-icon">${ICON.end}</span>`;
+    end.title =
+      squatting ??
+      (gain
+        ? `ここでターンを終えると血を ${suck.min}〜${suck.max} 吸える（平均 ${suck.mean.toFixed(1)}）`
+        : 'ターン終了');
+    // 動かずには終われない手番では、⏭ ではなく 👣 を出す ―― 「まず歩け」を絵で言う
+    end.innerHTML = squatting
+      ? `<span class="btn-icon">${ICON.step}</span>`
+      : `${
+          gain ? `<span class="btn-gain">${ICON.blood}+${suck.min}〜${suck.max}</span>` : ''
+        }<span class="btn-icon">${ICON.end}</span>`;
     end.addEventListener('click', () => this.handleEndTurn());
     node.append(end);
   }

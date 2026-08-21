@@ -112,6 +112,7 @@ describe('ボットの判断', () => {
     const refuge = cellId(RING_COUNT, 2);
     expect(state.board.cells[refuge].kind).toBe('cave');
     bot.at = cellId(RING_COUNT, 1);
+    bot.startedAt = bot.at;
     expect(state.board.cells[bot.at].neighbors).toContain(refuge);
     expect(state.board.cells[bot.at].neighbors).toContain(state.board.castleCells[0]);
     bot.carrying = 90;
@@ -123,6 +124,19 @@ describe('ボットの判断', () => {
     expect(state.players[0].at).not.toBe(refuge);
     expect(state.players[0].at).toBe(state.board.castleCells[0]);
     expect(state.players[0].score).toBe(90);
+  });
+
+  it('ボットは洞窟に座り続けない ―― 篭りは規則で塞がれている', () => {
+    const state = newBotGame(2);
+    const cave = state.board.caveCells[0];
+    const bot = state.players[0];
+    bot.at = cave;
+    bot.startedAt = cave;
+
+    botTakeTurn(state);
+    // 穴から出ている。しかも同じ手番のうちには潜り直せない（足跡）
+    expect(state.players[0].at).not.toBe(cave);
+    expect(state.current).toBe(1); // 手番はちゃんと回っている
   });
 
   it('村の血が尽きたら、ボットは安全な場所で朝を待つ', () => {

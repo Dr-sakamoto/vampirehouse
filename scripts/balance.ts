@@ -1,16 +1,27 @@
 /** バランス確認用のシミュレーション。`npm run balance` で回す（すべてボットの自動対戦） */
 import { botTakeTurn } from '../src/game/ai';
 import { createGame, defaultConfig } from '../src/game/rules';
-import type { GameConfig } from '../src/game/types';
+import type { GameConfig, GameState } from '../src/game/types';
+import { camperTakeTurn } from './camper';
 
-function run(playerCount: number, seed: number, tweak?: (c: GameConfig) => void) {
+/** camper に指定した席だけ「洞窟主」（篭り戦術）で打つ */
+function run(playerCount: number, seed: number, tweak?: (c: GameConfig) => void, camper?: number) {
   const config = defaultConfig(playerCount, Array(playerCount).fill(true));
   config.seed = seed;
   tweak?.(config);
   const state = createGame(config);
   let guard = 0;
-  while (state.phase !== 'gameover' && guard++ < 20000) botTakeTurn(state);
+  while (state.phase !== 'gameover' && guard++ < 20000) {
+    if (state.current === camper) camperTakeTurn(state);
+    else botTakeTurn(state);
+  }
   return state;
+}
+
+/** そのプレイヤーが洞窟で引いたコウモリの枚数（ログから数える） */
+function batsDrawn(state: GameState, index: number): number {
+  const name = state.players[index].name;
+  return state.log.filter((e) => e.text === `${name} が洞窟でコウモリを1枚得た。`).length;
 }
 
 const GAMES = 60;
@@ -95,6 +106,51 @@ for (const playerCount of [2, 3, 4]) {
   );
 }
 
+
+/**
+ * 篭り（洞窟主）の検算 ―― 席0だけが「村へ行かず、洞窟に籠って他人の稼ぎを刈る」戦術を打つ。
+ * 洞窟は最外リングにあり、ハンターは来ず、陽光も届かない。
+ * この席が普通のボットを上回るなら、盤面に**リスクを負わない稼ぎ方**が残っている。
+ */
+function measureCamp(playerCount: number, tweak?: (c: GameConfig) => void) {
+  const camp: number[] = [];
+  const rest: number[] = [];
+  const campBats: number[] = [];
+  const restBats: number[] = [];
+  const campDeaths: number[] = [];
+  let campWins = 0;
+
+  for (let seed = 1; seed <= GAMES; seed++) {
+    const s = run(playerCount, seed, tweak, 0);
+    const scores = s.players.map((p) => p.score);
+    camp.push(scores[0]);
+    rest.push(...scores.slice(1));
+    campBats.push(batsDrawn(s, 0));
+    for (let i = 1; i < playerCount; i++) restBats.push(batsDrawn(s, i));
+    campDeaths.push(s.players[0].deaths);
+    if (Math.max(...scores) === scores[0]) campWins += 1;
+  }
+
+  return {
+    playerCount,
+    camp: avg(camp),
+    rest: avg(rest),
+    winRate: campWins / GAMES,
+    campBats: avg(campBats),
+    restBats: avg(restBats),
+    deaths: avg(campDeaths),
+  };
+}
+
+console.log('\n篭り戦術（洞窟主）を1人混ぜたとき');
+for (const playerCount of [2, 3, 4]) {
+  const m = measureCamp(playerCount);
+  console.log(
+    `${m.playerCount}人:  洞窟主 ${f(m.camp)}  他の席 ${f(m.rest)}` +
+      `  洞窟主の勝率 ${f(m.winRate * 100, 0)}%  洞窟主の死亡 ${f(m.deaths)}` +
+      `  引いた札 洞窟主 ${f(m.campBats, 1)} / 他 ${f(m.restBats, 1)}`,
+  );
+}
 
 // 持ち帰り1回ぶんの当たりの散らばり ―― ここが「ドーパミンの出方」そのもの
 console.log('\n1回の持ち帰りの分布（2人戦）');

@@ -85,6 +85,7 @@ export function createGame(config: GameConfig): GameState {
     score: 0,
     bats: [],
     movesLeft: 0,
+    startedAt: castleOf(board, i),
     batsPlayedThisTurn: 0,
     lootedCaveThisTurn: false,
     bitThisTurn: false,
@@ -201,6 +202,32 @@ function refugeBlocked(state: GameState, id: string, moverIndex: number): boolea
   return state.players.some((p) => p.index !== moverIndex && p.at === id);
 }
 
+/**
+ * 腰を据えてよいマスか ―― **村と自分の城だけ**。
+ *
+ * 村は血を吸うために粘る場所（引き際の判断そのもの）、城は自分の棺。
+ * この2つ以外のマスは「通る場所」であって「住む場所」ではない、というのが
+ * 移動の規則の芯にある（§足跡）。
+ */
+function isDwelling(state: GameState, player: Player, id: string): boolean {
+  const cell = state.board.cells[id];
+  if (!cell) return false;
+  if (cell.kind === 'village') return true;
+  return cell.kind === 'castle' && cell.castleOf === player.index;
+}
+
+/**
+ * 足跡 ―― 手番を始めたマスへは、一歩でも動いたら戻れない。
+ *
+ * これが無いと、洞窟の隣へ1歩出て戻るだけで**毎ターン1枚コウモリが刷れる**。
+ * 穴は陽もハンターも届かない最外リングにあるので、その蛇口は
+ * 一切のリスク無しに回り続けてしまう（`balance.md` §3）。
+ * 腰を据えてよい村と自分の城だけは、出戻りも許す。
+ */
+function lockedBehind(state: GameState, player: Player, id: string): boolean {
+  return id === player.startedAt && !isDwelling(state, player, id);
+}
+
 /** 現在の手番プレイヤーが1歩で移動できるマス */
 export function legalMoves(state: GameState): string[] {
   if (state.phase !== 'playing') return [];
@@ -210,8 +237,29 @@ export function legalMoves(state: GameState): string[] {
     const cell = state.board.cells[id];
     if (cell.kind === 'castle' && cell.castleOf !== player.index) return false;
     if (refugeBlocked(state, id, player.index)) return false;
+    if (lockedBehind(state, player, id)) return false;
     return true;
   });
+}
+
+/**
+ * この手番を終えられるか（終えられない理由を返す）。
+ *
+ * **腰を据えられるのは村と自分の城だけ。**それ以外のマスでは、動けるかぎり
+ * 必ず1歩は動く ―― 洞窟に座り続けるだけで陽もハンターも避けられる、という
+ * 「待っているのがいちばん強い」局面を盤面から無くすための規則（§足跡）。
+ *
+ * 動きたくても動けないとき（スタン・行き先がすべて塞がっている）は免除される。
+ * 空が白んだラウンドも免除 ―― 見つけた影から追い立てるための規則ではない。
+ */
+export function endTurnError(state: GameState): string | null {
+  if (state.phase !== 'playing') return null;
+  const player = currentPlayer(state);
+  if (player.at !== player.startedAt) return null;
+  if (isDwelling(state, player, player.at)) return null;
+  if (state.dawnPending) return null;
+  if (legalMoves(state).length === 0) return null;
+  return '同じマスに居座れるのは村と自分の城だけ ―― 1歩は動くこと';
 }
 
 /**
@@ -319,6 +367,8 @@ export function beginTurn(state: GameState): void {
   } else {
     player.movesLeft = moveAllowance(state, player);
   }
+  // 足跡は手番ごとに引き直す ―― ここを出たら、この手番のうちは戻れない
+  player.startedAt = player.at;
   player.batsPlayedThisTurn = 0;
   player.lootedCaveThisTurn = false;
   player.bitThisTurn = false;
@@ -429,6 +479,8 @@ function killPlayer(
   const origin = player.at;
   player.at = castleOf(state.board, player.index);
   player.movesLeft = 0;
+  // 運ばれた先では足跡が途切れる（自分で歩いた道ではない）
+  player.startedAt = player.at;
   pushTrail(state, player.index, origin, player.at, 'teleport');
   if (killer && killer.index !== player.index) killer.kills += 1;
   const spoils =
@@ -531,6 +583,8 @@ export function moveTo(state: GameState, target: string): boolean {
 
 export function endTurn(state: GameState): void {
   if (state.phase !== 'playing') return;
+  // 腰を据えられるのは村と自分の城だけ。それ以外では1歩は動く（§足跡）
+  if (endTurnError(state) !== null) return;
   const player = currentPlayer(state);
 
   // 村に留まって夜を明かすほど血が採れる ―― それが引き際の賭け
@@ -756,6 +810,8 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
       player.at = theirs;
       victim.at = mine;
       player.movesLeft = 0;
+      player.startedAt = theirs;
+      victim.startedAt = mine;
       pushTrail(state, player.index, mine, theirs, 'teleport');
       pushTrail(state, victim.index, theirs, mine, 'teleport');
       pushLog(

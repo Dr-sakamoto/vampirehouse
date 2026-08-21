@@ -6,6 +6,7 @@ import {
   currentPlayer,
   dawnAnnounced,
   endTurn,
+  endTurnError,
   hunterCells,
   hunterNextCell,
   isFinalNight,
@@ -116,9 +117,19 @@ function safePath(
 /**
  * ハンターと罠を避けた経路を優先し、無ければ譲れるものから譲る。
  * 最後の最後は「罠は踏む、ハンターだけは踏まない」―― 門を塞がれたときの逃げ道。
+ *
+ * `walked` には「この手番を始めたマス」を渡す。足跡の規則（一歩でも動いたら
+ * 開始マスへは戻れない）に引っかかる経路を、机上の段階で外しておくため。
  */
-function routeFrom(state: GameState, me: Player, from: string, target: string): string[] | null {
-  const blocked = blockedCells(state, me);
+function routeFrom(
+  state: GameState,
+  me: Player,
+  from: string,
+  target: string,
+  walked: Iterable<string> = [],
+): string[] | null {
+  const blocked = new Set([...blockedCells(state, me), ...walked]);
+  blocked.delete(from);
   const cautious = new Set([...blocked, ...dangerCells(state)]);
   const path = safePath(state, from, target, cautious);
   if (path) return path;
@@ -127,12 +138,14 @@ function routeFrom(state: GameState, me: Player, from: string, target: string): 
   const grazing = safePath(state, from, target, minimal);
   if (grazing) return grazing;
   // それでも届かないなら、罠は踏む。1手番は失うが、抱えた血は守れる
-  const desperate = new Set([...hardBlocked(state, me), ...hunterCells(state)]);
+  const desperate = new Set([...hardBlocked(state, me), ...walked, ...hunterCells(state)]);
+  desperate.delete(from);
   return safePath(state, from, target, desperate);
 }
 
+/** いま立っている場所から目的地へ。この手番の足跡は踏み直せない */
 function routeTo(state: GameState, me: Player, target: string): string[] | null {
-  return routeFrom(state, me, me.at, target);
+  return routeFrom(state, me, me.at, target, [me.startedAt]);
 }
 
 function pathCost(path: string[] | null): number {
@@ -225,7 +238,7 @@ function biteDetour(
     const rest =
       target === null || target === prey.at
         ? [prey.at]
-        : routeFrom(state, me, prey.at, target);
+        : routeFrom(state, me, prey.at, target, [me.startedAt]);
     if (!rest) continue;
     const total = pathCost(toPrey) + pathCost(rest);
     if (mustArriveThisTurn && total > me.movesLeft) continue;
@@ -289,6 +302,30 @@ function villageRivals(state: GameState, me: Player): number {
 }
 
 /**
+ * 「腰を据えられるのは村と自分の城だけ」―― そこ以外で一歩も動かずに手番を
+ * 終えようとしたときの後始末。いちばん害の少ない1歩を選ぶ。
+ *
+ * ハンターの進路を避け、そのうえで避難所（または自分の城）にいちばん近づく側へ動く。
+ * 洞窟に座ったまま夜を過ごす、という選択肢が消えるので、ボットも
+ * 「どこで朝を待つか」を毎ラウンド選び直すことになる。
+ */
+function stepAsideIfSquatting(state: GameState): void {
+  if (endTurnError(state) === null) return;
+  const me = currentPlayer(state);
+  const danger = dangerCells(state);
+  const all = legalMoves(state);
+  const safe = all.filter((id) => !danger.has(id));
+  const options = safe.length > 0 ? safe : all;
+  if (options.length === 0) return;
+  const toShelter = (id: string) =>
+    nearestRefuge(state, me, id, true)?.cost ?? Number.POSITIVE_INFINITY;
+  moveTo(
+    state,
+    options.reduce((best, id) => (toShelter(id) < toShelter(best) ? id : best)),
+  );
+}
+
+/**
  * 罠を張る価値がいちばん高いマス ―― **血を抱えた相手の城の門**。
  *
  * 城は最外リングの1マスにしかぶら下がっていないので、門は盤面で唯一
@@ -339,7 +376,10 @@ function snareDetour(state: GameState, me: Player, target: string | null): strin
   for (const spot of snareSpots(state, me)) {
     const toSpot = routeTo(state, me, spot);
     if (!toSpot || pathCost(toSpot) > me.movesLeft) continue;
-    const rest = target === null || target === spot ? [spot] : routeFrom(state, me, spot, target);
+    const rest =
+      target === null || target === spot
+        ? [spot]
+        : routeFrom(state, me, spot, target, [me.startedAt]);
     if (!rest) continue;
     const extra = pathCost(toSpot) + pathCost(rest) - direct;
     if (extra > 2) continue;
@@ -419,6 +459,7 @@ export function botTakeTurn(state: GameState): void {
     }
   }
 
+  stepAsideIfSquatting(state);
   endTurn(state);
 }
 
