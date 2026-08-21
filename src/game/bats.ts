@@ -37,7 +37,7 @@ export const BAT_SPECS: Record<BatKind, BatSpec> = {
     kind: 'rush',
     name: '強襲',
     copies: 3,
-    text: 'このターン、通り抜けたマスにいる他プレイヤーを仕留める。抱えていた血はすべて自分のものになる。',
+    text: 'このターン、通り抜けたマスにいる他プレイヤーを仕留める。抱えていた血の半分が自分のものになる（残りは村へ還る）。',
     icon: '»',
   },
   swap: {

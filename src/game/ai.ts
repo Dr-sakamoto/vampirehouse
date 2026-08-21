@@ -403,7 +403,8 @@ export function botTakeTurn(state: GameState): void {
   const target = chooseTarget(state, escapeNow);
 
   // --- 強襲は「構え」なので、動き出す前に切っておく必要がある ---
-  // 相手のマスへちょうど乗れるときだけ意味がある札で、決まれば相手の血を丸ごと奪える。
+  // 相手のマスへちょうど乗れるときだけ意味がある札で、決まれば相手の一夜を消せる
+  // （手取りは半分だが、相手は全額を失う）。
   // 血を積んだ相手が射程にいるなら、予告ラウンドでなくても狙う価値がある
   let path: string[] | null = null;
   const rushUid = findBat(me, 'rush');

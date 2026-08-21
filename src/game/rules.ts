@@ -468,12 +468,14 @@ function killPlayer(
     return false;
   }
   const lost = player.carrying;
-  if (killer && killer.index !== player.index && lost > 0) {
-    transferBlood(killer, player, lost);
-  } else {
-    state.bloodPool += lost;
-    player.carrying = 0;
-  }
+  // 仕留めても持ち去れるのは半分だけ。残りは地面に染みて村へ還る。
+  // 奪い高は噛みつきと同じ規則（`biteAmount`）―― 噛もうが仕留めようが動くのは半分で、
+  // 違うのは「相手が生き残るかどうか」のほう
+  const taken =
+    killer && killer.index !== player.index && lost > 0 ? Math.min(biteAmount(lost), lost) : 0;
+  if (taken > 0) transferBlood(killer!, player, taken);
+  state.bloodPool += player.carrying;
+  player.carrying = 0;
   player.deaths += 1;
   player.stunned = false;
   const origin = player.at;
@@ -485,8 +487,8 @@ function killPlayer(
   if (killer && killer.index !== player.index) killer.kills += 1;
   const spoils =
     lost > 0
-      ? killer && killer.index !== player.index
-        ? `血 ${lost} は ${killer.name} が啜り、`
+      ? taken > 0
+        ? `血 ${lost} のうち ${taken} を ${killer!.name} が啜り、残りは村へ還り、`
         : `血 ${lost} を落とし、`
       : '';
   pushLog(state, `${player.name} は${reason}。${spoils}城へ引き戻された。`, 'bad');
@@ -554,8 +556,8 @@ export function moveTo(state: GameState, target: string): boolean {
   // 《強襲》を切っていれば、通り抜けたマスにいる相手を仕留める。
   //
   // 当たる機会そのものが少ない札（相手のマスへちょうど乗る精度が要る）なので、
-  // 当たり判定を広げるのではなく一撃を重くしてある ―― 決まれば相手の血は
-  // すべて襲った側のものになる。狙って当てたときだけ盤面がひっくり返る。
+  // 当たり判定を広げるのではなく一撃を重くしてある ―― 決まれば相手はその夜の
+  // 稼ぎを丸ごと失う。ただし持ち去れるのは半分で、残りは村へ還る（`killPlayer`）。
   if (player.rushing) {
     for (const p of state.players) {
       if (p.index !== player.index && p.at === target) {

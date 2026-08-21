@@ -667,7 +667,7 @@ describe('コウモリの効果', () => {
     expect(trapAt(state, spot)?.owner).toBe(0);
   });
 
-  it('強襲: 通り抜けたマスにいる相手を仕留め、その血を奪う', () => {
+  it('強襲: 通り抜けたマスにいる相手を仕留め、その血の半分を奪う', () => {
     const state = newGame(2);
     const via = cellId(1, 0);
     teleport(state, 0, VILLAGE);
@@ -680,10 +680,10 @@ describe('コウモリの効果', () => {
     expect(state.players[1].deaths).toBe(1);
     expect(state.players[1].carrying).toBe(0);
     expect(state.players[1].at).toBe(state.board.castleCells[1]);
-    // 血は村へ還らず、襲った側の懐に入る
-    expect(state.players[0].carrying).toBe(80);
+    // 持ち去れるのは半分だけ。残りは地面に染みて村へ還る
+    expect(state.players[0].carrying).toBe(40);
     expect(state.players[0].kills).toBe(1);
-    expect(state.bloodPool).toBe(poolBefore);
+    expect(state.bloodPool).toBe(poolBefore + 40);
   });
 
   it('強襲: 構えを取った時点で、同じマスの相手も仕留める', () => {
@@ -694,7 +694,7 @@ describe('コウモリの効果', () => {
     state.players[1].carrying = 30;
     playBat(state, giveBat(state, 0, 'rush'));
     expect(state.players[1].deaths).toBe(1);
-    expect(state.players[0].carrying).toBe(30);
+    expect(state.players[0].carrying).toBe(20); // 30の半分は10単位に丸めて20
   });
 
   it('強襲: 蝙蝠傘を差していれば1回だけ凌げる', () => {
@@ -970,9 +970,25 @@ describe('仕留めた相手の血（PVP）', () => {
     const poolBefore = state.bloodPool;
     playBat(state, uid, { player: 1 });
     expect(state.players[1].carrying).toBe(0);
-    expect(state.players[0].carrying).toBe(30);
+    // 仕留めても半分。残りは村へ還る（血の総量は減らない）
+    expect(state.players[0].carrying).toBe(20);
     expect(state.players[0].kills).toBe(1);
-    expect(state.bloodPool).toBe(poolBefore);
+    expect(state.bloodPool).toBe(poolBefore + 10);
+  });
+
+  it('仕留めの奪い高は噛みつきと同じ ―― どれだけ抱えていても半分', () => {
+    for (const carrying of [10, 30, 80, 250]) {
+      const state = newGame(2);
+      const spot = cellId(1, 0);
+      teleport(state, 0, spot);
+      teleport(state, 1, spot);
+      state.players[1].carrying = carrying;
+      const poolBefore = state.bloodPool;
+      playBat(state, giveBat(state, 0, 'rush'));
+      expect(state.players[0].carrying).toBe(biteAmount(carrying));
+      // 残りは消えずに村へ還る ―― 盤上から血が痩せない
+      expect(state.bloodPool).toBe(poolBefore + carrying - biteAmount(carrying));
+    }
   });
 
   it('太陽やハンターに自滅した血は村へ還る（誰のものにもならない）', () => {

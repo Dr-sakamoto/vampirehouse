@@ -5,12 +5,15 @@
  *
  * - 洞窟を出入りしてコウモリを引く（通過するたび1枚）
  * - 隣り合う城の門に罠を張る
- * - 血を抱えて帰ってきた相手に噛みつく／強襲を当てる
+ * - 血を抱えて帰ってきた相手に噛みつく／強襲を当てる（どちらも奪えるのは半分）
  * - 夜明けは穴の中でやり過ごす（ハンターはリング2までしか来ない）
  *
  * 最外リングから一歩も出ないので、ハンターにも陽光にも当たらない。
  * つまり **一切のリスクを負わずに、他人の稼ぎだけで点を取る**。
  * この戦術が普通のボットに勝てるかどうかが、篭りが強すぎるかどうかの尺度になる。
+ *
+ * 打ち筋は規則を入れる前のまま置いてある ―― 足跡や居座り禁止に阻まれた分は
+ * そのまま「篭りが払うようになった値段」として数字に出る。
  */
 import { castleGate, castleOf, isRefugeKind } from '../src/game/board';
 import { HAND_LIMIT } from '../src/game/bats';
@@ -205,7 +208,7 @@ export function camperTakeTurn(state: GameState): void {
 
   const mark = prey(state, me);
   if (mark) {
-    // 太い相手なら強襲で丸ごと奪う。そうでなくても噛みつきで半分は取れる
+    // 太い相手なら強襲で仕留めて半分を奪う。そうでなくても噛みつきで半分は取れる
     const rushUid = findBat(me, 'rush');
     if (rushUid && mark.carrying >= SNARE_WORTH && batPlayError(state, 'rush') === null) {
       playBat(state, rushUid);
