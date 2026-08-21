@@ -350,7 +350,7 @@ button.ghost { background: transparent; }
   opacity: 0;
 }
 .cutin.is-visible .cutin-bar {
-  animation: cutin-sweep 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation: cutin-sweep 1.9s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 .cutin-name { text-shadow: 0 1px 4px rgb(0 0 0 / 0.6); }
 .cutin-verb { font-weight: 600; opacity: 0.9; }

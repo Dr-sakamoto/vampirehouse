@@ -28,7 +28,7 @@ type Targeting =
 
 const BOT_STEP_MS = 420;
 /** カットインが画面に留まる時間 */
-const CUTIN_MS = 1100;
+const CUTIN_MS = 1900;
 
 /**
  * HUDの語彙。文章の代わりにこの記号だけで状況を伝える。
