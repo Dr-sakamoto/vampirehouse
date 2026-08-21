@@ -60,13 +60,23 @@ interface HunterRefs {
   lastSector: number;
 }
 
+/** 血バッジ（携行血液数）の高さと、1桁あたりの目安幅。桁数が増えても数字が
+ *  円のフチに迫らないよう、丸から横に伸びるピル型にして幅だけ増やす */
+const BADGE_HEIGHT = 24;
+const BADGE_PAD_X = 7;
+const BADGE_DIGIT_WIDTH = 10;
+
+function badgeWidthFor(digits: number): number {
+  return Math.max(BADGE_HEIGHT, digits * BADGE_DIGIT_WIDTH + BADGE_PAD_X * 2);
+}
+
 interface PieceRefs {
   group: SVGGElement;
   shadow: SVGCircleElement;
   body: SVGCircleElement;
   label: SVGTextElement;
   badge: SVGGElement;
-  badgeCircle: SVGCircleElement;
+  badgeShape: SVGRectElement;
   badgeCount: SVGTextElement;
 }
 
@@ -344,10 +354,10 @@ export class BoardView {
     const body = el('circle', { cx: 0, cy: 0, class: 'piece-body', fill: player.color });
     const label = el('text', { x: 0, y: 6, class: 'piece-label', 'text-anchor': 'middle' });
     label.textContent = String(index + 1);
-    const badgeCircle = el('circle', { cx: 0, cy: 0, r: 15 });
+    const badgeShape = el('rect', { x: 0, y: 0, width: BADGE_HEIGHT, height: BADGE_HEIGHT, rx: BADGE_HEIGHT / 2 });
     const badgeCount = el('text', { x: 0, y: 4, 'text-anchor': 'middle', class: 'piece-blood-count' });
     const badge = el('g', { class: 'piece-blood' });
-    badge.append(badgeCircle, badgeCount);
+    badge.append(badgeShape, badgeCount);
     group.append(shadow, body, label, badge);
     this.pieceLayer.append(group);
 
@@ -355,7 +365,7 @@ export class BoardView {
     const start = cellCenter(state.board.cells[player.at]);
     group.style.transform = `translate(${start.x}px, ${start.y}px)`;
 
-    refs = { group, shadow, body, label, badge, badgeCircle, badgeCount };
+    refs = { group, shadow, body, label, badge, badgeShape, badgeCount };
     this.pieces.set(index, refs);
     return refs;
   }
@@ -387,13 +397,16 @@ export class BoardView {
     refs.label.classList.toggle('is-small', stacked);
     if (carrying > 0) {
       refs.badge.style.display = '';
-      const badgeX = pieceRadius + 1;
+      const text = String(carrying);
+      const width = badgeWidthFor(text.length);
+      const badgeX = pieceRadius + 1 + (width - BADGE_HEIGHT) / 2;
       const badgeY = -pieceRadius + 1;
-      refs.badgeCircle.setAttribute('cx', String(badgeX));
-      refs.badgeCircle.setAttribute('cy', String(badgeY));
+      refs.badgeShape.setAttribute('x', String(badgeX - width / 2));
+      refs.badgeShape.setAttribute('y', String(badgeY - BADGE_HEIGHT / 2));
+      refs.badgeShape.setAttribute('width', String(width));
       refs.badgeCount.setAttribute('x', String(badgeX));
-      refs.badgeCount.setAttribute('y', String(badgeY + 7));
-      refs.badgeCount.textContent = String(carrying);
+      refs.badgeCount.setAttribute('y', String(badgeY + 5));
+      refs.badgeCount.textContent = text;
     } else {
       refs.badge.style.display = 'none';
     }
