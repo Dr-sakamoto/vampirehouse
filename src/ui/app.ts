@@ -1,5 +1,5 @@
 import { botTakeTurn } from '../game/ai';
-import { BAT_SPECS } from '../game/bats';
+import { BAT_ORDER, BAT_SPECS } from '../game/bats';
 import {
   batPlayError,
   createGame,
@@ -55,6 +55,7 @@ const ICON = {
   cw: '↻',
   ccw: '↺',
   aim: '🎯',
+  help: '?',
 } as const;
 
 /** 数を「点いた粒」で見せる。読まずに残量が分かる */
@@ -77,6 +78,7 @@ export class App {
   private targeting: Targeting = { kind: 'none' };
   private botTimer: number | null = null;
   private lastNight = 1;
+  private helpOpen = false;
   /** まだカットインに反映していない batPlays の先頭。BatPlayEvent.seq と比較する */
   private nextBatPlaySeq = 0;
   private cutinQueue: { player: Player; kind: BatKind }[] = [];
@@ -118,6 +120,17 @@ export class App {
     cutin.id = 'cutin';
     stage.append(cutin);
 
+    const helpToggle = document.createElement('button');
+    helpToggle.className = 'help-toggle';
+    helpToggle.title = 'ルールを見る';
+    helpToggle.textContent = ICON.help;
+    helpToggle.addEventListener('click', () => {
+      this.helpOpen = !this.helpOpen;
+      this.renderHelp();
+    });
+    stage.append(helpToggle);
+    stage.append(this.buildHelpModal());
+
     const left = document.createElement('aside');
     left.className = 'hud hud-left';
     left.innerHTML = `
@@ -147,6 +160,64 @@ export class App {
 
   private q<T extends HTMLElement>(id: string): T {
     return this.root.querySelector<T>(`#${id}`)!;
+  }
+
+  /**
+   * HUDは記号だけで進行を伝える設計にしているぶん、初見では読み解けない。
+   * その裏付けとなる文章のルールを、いつでも呼び出せる場所に1つだけ置く。
+   */
+  private buildHelpModal(): HTMLElement {
+    const modal = document.createElement('div');
+    modal.className = 'help-modal';
+    modal.id = 'help-modal';
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        this.helpOpen = false;
+        this.renderHelp();
+      }
+    });
+
+    const panel = document.createElement('div');
+    panel.className = 'help-panel';
+    panel.innerHTML = `
+      <button class="help-close" title="閉じる">${ICON.cancel}</button>
+      <h2>遊びかた</h2>
+      <ul>
+        <li><b>目的</b> 中心の村（${ICON.blood}）で血を吸い、四隅の自分の城（${ICON.castle}）へ持ち帰る。抱えた血の数字がそのまま得点 ―― <b>持ち帰るまでは0点</b>。</li>
+        <li><b>移動</b> 毎ターン ${this.state.config.baseMove} 歩。同心円に沿って横へ、放射線に沿って内外へ。</li>
+        <li><b>吸血</b> 村でターンを終えるたびに血を吸える。いくつ出るかは振ってみるまで分からない。抱えても足は鈍らない。</li>
+        <li><b>${ICON.dawn} 夜明け</b> 最初の数ラウンドは必ず夜が続く（🌙ゲージ）。それを過ぎると毎ラウンド確率で空が白み（<b>%表示</b>）、白んだら（<b>「今」</b>表示）そのラウンドの終わりに必ず朝が来る。避難所（${ICON.shade}/${ICON.bat}）か城にいない者は焼かれ、抱えた血をすべて失う。</li>
+        <li><b>${ICON.hunter} ハンター</b> リング2を周回する。触れれば即死。次の一歩は盤面に予告される。</li>
+        <li><b>${ICON.bat} 洞窟</b> 最外リングの左右だけ。通るとコウモリ（発展カード）を引ける。</li>
+        <li><b>決着</b> 全 ${this.state.config.totalNights} 夜が明けたら終わり。最終夜は村の血が濃くなる。</li>
+      </ul>
+      <h3>${ICON.bat} コウモリ</h3>
+      <ul class="bat-list">
+        ${BAT_ORDER.map((kind) => {
+          const spec = BAT_SPECS[kind];
+          return `<li><b>${spec.icon} ${spec.name}</b> — ${spec.text}</li>`;
+        }).join('')}
+      </ul>
+      <h3>HUDの記号</h3>
+      <ul class="legend-list">
+        <li><span class="stat safe">${ICON.shade}</span> 夜明けが来ても安全</li>
+        <li><span class="stat exposed">${ICON.dawn}</span> 陽の下 ―― 夜明けが来れば灰になる</li>
+        <li><span class="stat">☂</span> 蝙蝠傘を差している（即死を1回肩代わり）</li>
+        <li><span class="stat">✳</span> スタン中（次の手番は動けない）</li>
+        <li><span class="stat">${ICON.step}</span> このターンの残り移動力</li>
+      </ul>
+    `;
+    modal.append(panel);
+    panel.querySelector('.help-close')!.addEventListener('click', () => {
+      this.helpOpen = false;
+      this.renderHelp();
+    });
+    return modal;
+  }
+
+  private renderHelp(): void {
+    const modal = this.q<HTMLElement>('help-modal');
+    modal.classList.toggle('is-open', this.helpOpen);
   }
 
   // -------------------------------------------------------------- 入力
@@ -294,6 +365,7 @@ export class App {
         over ? `全 ${s.config.totalNights} 夜が明けた` : `第 ${s.night} 夜 / 全 ${s.config.totalNights} 夜`
       }">
         <span class="gauge-icon">${ICON.night}</span>
+        <b class="gauge-text">${over ? s.config.totalNights : s.night}<span class="gauge-max">/${s.config.totalNights}</span></b>
         <span class="pips">${pips(s.config.totalNights, over ? s.config.totalNights : s.night)}</span>
       </span>
       <span class="gauge gauge-dawn" title="${
@@ -310,10 +382,10 @@ export class App {
         <span class="gauge-icon">${ICON.dawn}</span>
         ${
           announced
-            ? '<b class="risk">今</b>'
+            ? '<b class="risk">今夜が明ける</b>'
             : risk > 0
-              ? `<b class="risk">${Math.round(risk * 100)}%</b>`
-              : `<span class="pips">${pips(s.config.safeRounds, safeLeft)}</span>`
+              ? `<b class="risk">${Math.round(risk * 100)}%で夜明け</b>`
+              : `<b class="gauge-text">あと${safeLeft}R安全</b><span class="pips">${pips(s.config.safeRounds, safeLeft)}</span>`
         }
       </span>
       <span class="stat stat-blood" title="${over ? '村に残った血' : '村に残っている血'} ${s.bloodPool}">

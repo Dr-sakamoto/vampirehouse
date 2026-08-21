@@ -325,6 +325,66 @@ button.ghost { background: transparent; }
   100% { opacity: 0; }
 }
 
+/* --- ヘルプ（遊びかた）。いつでも呼び出せる文章のルール --- */
+.help-toggle {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 6;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--night-1) 88%, transparent);
+  backdrop-filter: blur(6px);
+}
+.help-toggle:hover { color: var(--text); }
+
+.help-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: none;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(2px);
+}
+.help-modal.is-open { display: grid; }
+.help-panel {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  background: linear-gradient(180deg, var(--night-1), var(--night-0));
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 30px 80px rgb(0 0 0 / 0.5);
+}
+.help-panel h2 { margin: 0 0 14px; font-size: 20px; letter-spacing: 0.06em; }
+.help-panel h3 { margin: 18px 0 6px; font-size: 13px; letter-spacing: 0.1em; color: var(--muted); }
+.help-panel ul { padding-left: 20px; margin: 10px 0; }
+.help-panel li { margin-bottom: 8px; line-height: 1.55; }
+.help-panel b { color: var(--text); }
+.legend-list { padding-left: 0 !important; list-style: none; }
+.legend-list li { display: flex; align-items: center; gap: 8px; }
+.legend-list .stat { font-size: 17px; }
+.help-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--muted);
+}
+
 /* --- コウモリ使用のカットイン。「誰が何を使ったか」を盤の上で一度は必ず読ませる --- */
 .cutin {
   position: absolute;
@@ -474,12 +534,21 @@ button.ghost { background: transparent; }
 .gauge-icon { font-size: 15px; line-height: 1; }
 .gauge-night { --pip: #b9a7ff; }
 .gauge-dawn { --pip: var(--sun); }
+.gauge-text {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gauge-max { font-size: 11px; font-weight: 600; color: var(--muted); }
 /* 確定の夜が尽きたあとは、残りラウンド数ではなく「毎ラウンドの確率」を出す */
 .gauge-dawn .risk {
   font-size: 13px;
   font-weight: 800;
   color: var(--sun);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .status .stat-blood b { font-size: 15px; }
 .mult {
