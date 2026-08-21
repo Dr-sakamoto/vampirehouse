@@ -5,7 +5,7 @@
  *
  * - 洞窟を出入りしてコウモリを引く（通過するたび1枚）
  * - 隣り合う城の門に罠を張る
- * - 血を抱えて帰ってきた相手に噛みつく／強襲を当てる（どちらも奪えるのは半分）
+ * - 血を抱えて帰ってきた相手に強襲を当てて積荷を奪う
  * - 夜明けは穴の中でやり過ごす（ハンターはリング2までしか来ない）
  *
  * 最外リングから一歩も出ないので、ハンターにも陽光にも当たらない。
@@ -206,13 +206,11 @@ export function camperTakeTurn(state: GameState): void {
     return;
   }
 
-  const mark = prey(state, me);
+  // 盤上で血が動くのは強襲だけ。札が無ければ、相手のマスへ乗っても何も起きない
+  const rushUid = findBat(me, 'rush');
+  const mark = rushUid && batPlayError(state, 'rush') === null ? prey(state, me) : null;
   if (mark) {
-    // 太い相手なら強襲で仕留めて半分を奪う。そうでなくても噛みつきで半分は取れる
-    const rushUid = findBat(me, 'rush');
-    if (rushUid && mark.carrying >= SNARE_WORTH && batPlayError(state, 'rush') === null) {
-      playBat(state, rushUid);
-    }
+    playBat(state, rushUid!);
     walk(state, path(state, me.at, mark.at, avoid));
   } else if (me.carrying > 0) {
     walk(state, path(state, me.at, home, avoid));

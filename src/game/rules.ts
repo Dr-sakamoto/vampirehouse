@@ -88,7 +88,6 @@ export function createGame(config: GameConfig): GameState {
     startedAt: castleOf(board, i),
     batsPlayedThisTurn: 0,
     lootedCaveThisTurn: false,
-    bitThisTurn: false,
     rushing: false,
     stunned: false,
     parasol: false,
@@ -121,6 +120,8 @@ export function createGame(config: GameConfig): GameState {
     lastBurned: [],
     trail: [],
     trailSeq: 0,
+    batPlays: [],
+    batPlaySeq: 0,
     rngState: shuffled.state,
   };
 
@@ -147,6 +148,12 @@ function pushTrail(
 function pushLog(state: GameState, text: string, tone: LogEntry['tone'] = 'info'): void {
   state.log.push({ round: state.round, night: state.night, text, tone });
   if (state.log.length > 200) state.log.splice(0, state.log.length - 200);
+}
+
+/** コウモリ使用を1件記録する（UIのカットイン演出用）。誰が何を使ったかだけを持つ */
+function pushBatPlay(state: GameState, player: number, kind: BatKind): void {
+  state.batPlays.push({ seq: state.batPlaySeq++, player, kind });
+  if (state.batPlays.length > 200) state.batPlays.splice(0, state.batPlays.length - 200);
 }
 
 // ---------------------------------------------------------------- 参照系
@@ -371,7 +378,6 @@ export function beginTurn(state: GameState): void {
   player.startedAt = player.at;
   player.batsPlayedThisTurn = 0;
   player.lootedCaveThisTurn = false;
-  player.bitThisTurn = false;
   player.rushing = false;
 }
 
@@ -427,18 +433,6 @@ function bankBlood(state: GameState, player: Player): void {
   pushLog(state, `${player.name} が血 ${carried} を持ち帰った。そのまま ${carried} 点。`, 'good');
 }
 
-/**
- * 一口ぶんの奪い高。相手が抱えている血の半分（10単位に丸める）。
- *
- * 血が「本数」だった頃、噛みつきは1本＝おおむね相手の持ち分の半分を奪っていた。
- * 血が点そのものになった今、固定額にすると相手の懐次第で無意味にも致命的にもなるので、
- * 当時の割合をそのまま規則にした。盤上の数字がいくつになっても効き目が変わらない。
- */
-export function biteAmount(carrying: number): number {
-  if (carrying <= 0) return 0;
-  return Math.max(10, Math.round(carrying / 2 / 10) * 10);
-}
-
 /** 血を被害者から加害者へ移す。総量は変わらない */
 function transferBlood(thief: Player, victim: Player, amount: number): void {
   const taken = Math.min(amount, victim.carrying);
@@ -468,14 +462,12 @@ function killPlayer(
     return false;
   }
   const lost = player.carrying;
-  // 仕留めても持ち去れるのは半分だけ。残りは地面に染みて村へ還る。
-  // 奪い高は噛みつきと同じ規則（`biteAmount`）―― 噛もうが仕留めようが動くのは半分で、
-  // 違うのは「相手が生き残るかどうか」のほう
-  const taken =
-    killer && killer.index !== player.index && lost > 0 ? Math.min(biteAmount(lost), lost) : 0;
-  if (taken > 0) transferBlood(killer!, player, taken);
-  state.bloodPool += player.carrying;
-  player.carrying = 0;
+  if (killer && killer.index !== player.index && lost > 0) {
+    transferBlood(killer, player, lost);
+  } else {
+    state.bloodPool += lost;
+    player.carrying = 0;
+  }
   player.deaths += 1;
   player.stunned = false;
   const origin = player.at;
@@ -487,8 +479,8 @@ function killPlayer(
   if (killer && killer.index !== player.index) killer.kills += 1;
   const spoils =
     lost > 0
-      ? taken > 0
-        ? `血 ${lost} のうち ${taken} を ${killer!.name} が啜り、残りは村へ還り、`
+      ? killer && killer.index !== player.index
+        ? `血 ${lost} は ${killer.name} が啜り、`
         : `血 ${lost} を落とし、`
       : '';
   pushLog(state, `${player.name} は${reason}。${spoils}城へ引き戻された。`, 'bad');
@@ -496,29 +488,39 @@ function killPlayer(
 }
 
 /**
- * 他プレイヤーのいるマスへ踏み込んだときの噛みつき。血を1つ奪う。1ターンに1回まで。
- * 「盤上で相手と同じマスに立つ」こと自体に意味を持たせる、常時使える干渉手段
- * ―― 血を積んだ者を帰り道で待ち伏せる、という形の PVP。
+ * 《強襲》が当たったときの処理 ―― 相手を組み伏せ、抱えていた血をすべて奪い、
+ * その場に押さえて足を止める。仕留めはしない。
  *
- * 城と村では起こらない。城は各プレイヤーの聖域であり、村は全員が必ず立ち寄る
- * 収穫地点なので、ここを狩り場にすると先に着いた者がただ搾取されるだけになる。
+ * 以前は「仕留める」（血を奪ったうえで城へ送り返す）だったが、ボット200戦で
+ * 測ると**強襲が動かす血は仕留めても組み伏せても変わらなかった**
+ * （48/106/149 → 52/107/156）。この札の重さは最初から積荷のほうにあって、
+ * 城へ送り返す部分ではなかった ―― つまり仕留めを外しても札は弱くならず、
+ * 「一夜の労働と盤上の位置を同時に消される」理不尽さだけが落ちる
+ * （[`docs/balance.md`](../../docs/balance.md) §2）。
+ *
+ * 奪い高を半分にする案は落とした（当時はまだ、無料で相手の半分を奪う「噛みつき」が
+ * 常時ある前提だった。噛みつきは以後廃止し、盤面の干渉手段は強襲に一本化した）。
+ * 半分にすると札を1枚払って同じ額になり、**札が何もしない対照と得点も勝差も
+ * 一致した**。カードは無料の手より重くなければ、置く意味が無い。
+ *
+ * 足を止めるほうは残す。コウモリは締め出しの札に絞ってあり、予告ラウンドに
+ * 当てれば椅子に届かなくなる ―― 血を奪われたうえで日向に置き去りにされる、
+ * というのが「組み伏せる」の素直な絵でもある。仕留めていた頃はここが逆で、
+ * 城は日陰なので**送り返すことが助けになっていた**。
+ *
+ * 即死ではなくなったので、蝙蝠傘（陽光とハンターの肩代わり）では防げない。
  */
-function bite(state: GameState, attacker: Player, cellIdAt: string): void {
-  if (attacker.bitThisTurn) return;
-  const kind = state.board.cells[cellIdAt].kind;
-  if (kind === 'castle' || kind === 'village') return;
-  const prey = state.players
-    .filter((p) => p.index !== attacker.index && p.at === cellIdAt && p.carrying > 0)
-    .sort((a, b) => b.carrying - a.carrying)[0];
-  if (!prey) return;
-  const taken = biteAmount(prey.carrying);
-  transferBlood(attacker, prey, taken);
-  attacker.bitThisTurn = true;
-  pushLog(
-    state,
-    `${attacker.name} が ${prey.name} に噛みつき、血 ${taken} を奪った（運搬中 ${attacker.carrying}）。`,
-    'bad',
-  );
+function pinDown(state: GameState, attacker: Player, victim: Player): void {
+  const loot = victim.carrying;
+  if (loot > 0) {
+    transferBlood(attacker, victim, loot);
+    pushLog(
+      state,
+      `${attacker.name} が ${victim.name} を組み伏せ、血 ${loot} を奪った（運搬中 ${attacker.carrying}）。`,
+      'bad',
+    );
+  }
+  stun(state, victim, `${attacker.name} に組み伏せられ`);
 }
 
 /** 1マス移動する。移動できたら true */
@@ -553,7 +555,7 @@ export function moveTo(state: GameState, target: string): boolean {
 
   const cell = state.board.cells[target];
 
-  // 《強襲》を切っていれば、通り抜けたマスにいる相手を仕留める。
+  // 《強襲》を切っていれば、通り抜けたマスにいる相手を組み伏せる。
   //
   // 当たる機会そのものが少ない札（相手のマスへちょうど乗る精度が要る）なので、
   // 当たり判定を広げるのではなく一撃を重くしてある ―― 決まれば相手はその夜の
@@ -561,13 +563,10 @@ export function moveTo(state: GameState, target: string): boolean {
   if (player.rushing) {
     for (const p of state.players) {
       if (p.index !== player.index && p.at === target) {
-        killPlayer(state, p, `${player.name} に組み伏せられた`, player);
+        pinDown(state, player, p);
       }
     }
   }
-
-  // 先客がいれば噛みつく（1ターン1回）
-  bite(state, player, target);
 
   // 自分の城に入ったら血が得点になる
   bankBlood(state, player);
@@ -777,6 +776,7 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
   if (batPlayError(state, card.kind) !== null) return false;
 
   const spec = BAT_SPECS[card.kind];
+  pushBatPlay(state, player.index, card.kind);
 
   switch (card.kind) {
     case 'snare': {
@@ -786,10 +786,10 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
     }
     case 'rush': {
       player.rushing = true;
-      // 既に同じマスに立っている相手は、踏み込み直すまでもなくその場で仕留める
+      // 既に同じマスに立っている相手は、踏み込み直すまでもなくその場で組み伏せる
       for (const p of state.players) {
         if (p.index !== player.index && p.at === player.at) {
-          killPlayer(state, p, `${player.name} に組み伏せられた`, player);
+          pinDown(state, player, p);
         }
       }
       pushLog(state, `${player.name} が《${spec.name}》の構えを取った。`, 'info');

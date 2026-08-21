@@ -207,19 +207,18 @@ function cheapCaveDetour(state: GameState, me: Player, directCost: number): stri
 }
 
 /**
- * 血を抱えた相手のマスを通ってから目的地へ向かう経路。
- * 通りすがりに1本奪えるなら、寄り道2歩ぶんまでは払う価値がある。
+ * 強襲で組み伏せに行くため、血を抱えた相手のマスを通ってから目的地へ向かう経路。
+ * 通りすがりに1人押さえられるなら、寄り道2歩ぶんまでは払う価値がある。
  */
-function biteDetour(
+function rushDetour(
   state: GameState,
   me: Player,
   target: string | null,
   mustArriveThisTurn: boolean,
-  /** 強襲で足を止めに行くときは、血を持っていない相手も獲物になる */
+  /** 予告ラウンドで足を止めに行くときは、血を持っていない相手も獲物になる */
   includeEmptyHanded = false,
 ): string[] | null {
   if (me.movesLeft <= 0) return null;
-  if (me.bitThisTurn && !includeEmptyHanded) return null;
   const danger = dangerCells(state);
   const direct = target === null ? 0 : pathCost(routeTo(state, me, target));
   let best: { path: string[]; extra: number } | null = null;
@@ -230,7 +229,7 @@ function biteDetour(
     // 既に安全な場所に座っている相手を止めても、朝は押しつけられない
     if (includeEmptyHanded && isSafeCell(state, prey, prey.at)) continue;
     if (state.board.cells[prey.at].kind === 'castle') continue;
-    // 噛みに行って轢かれては元も子もない
+    // 襲いに行って轢かれては元も子もない
     if (danger.has(prey.at)) continue;
     const toPrey = routeTo(state, me, prey.at);
     if (!toPrey || pathCost(toPrey) > me.movesLeft) continue;
@@ -409,7 +408,7 @@ export function botTakeTurn(state: GameState): void {
   let path: string[] | null = null;
   const rushUid = findBat(me, 'rush');
   if (rushUid && batPlayError(state, 'rush') === null) {
-    const hunt = biteDetour(state, me, target, escapeNow, escapeNow);
+    const hunt = rushDetour(state, me, target, escapeNow, escapeNow);
     if (hunt) {
       playBat(state, rushUid);
       path = hunt;
@@ -418,10 +417,6 @@ export function botTakeTurn(state: GameState): void {
 
   // --- 血を抱えた相手の城の門へ、寄り道して罠を張る ---
   if (path === null) path = snareDetour(state, currentPlayer(state), target);
-
-  // --- 罠を張りに行かないなら、通りすがりに噛める相手を探す ---
-  // 素の経路より寄り道のほうが優先。ここを素の経路の後ろに置くと噛みつきが死ぬ
-  if (path === null) path = biteDetour(state, currentPlayer(state), target, escapeNow);
 
   if (path === null && target !== null) path = routeTo(state, currentPlayer(state), target);
   if (path) walk(state, path);

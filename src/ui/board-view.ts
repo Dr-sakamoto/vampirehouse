@@ -6,7 +6,7 @@ import {
   legalMoves,
   dawnRisk,
 } from '../game/rules';
-import type { Cell, GameState, Player, TrailStep } from '../game/types';
+import type { Cell, GameState, Hunter, TrailStep } from '../game/types';
 import {
   CASTLE_RING,
   CENTER,
@@ -41,12 +41,34 @@ export interface BoardViewOptions {
  * その上に、当たり判定と状態表示を兼ねる円を重ねる（`geometry.ts` が座標計算）。
  */
 /** 1歩の移動アニメーションにかける時間と、次の一歩までの間 */
-const WALK_MS = 260;
-const WALK_GAP_MS = 90;
+const WALK_MS = 380;
+const WALK_GAP_MS = 140;
 /** 瞬間移動（誘導・影渡り・死亡での帰還）の一時停止。軌跡は引かない */
 const TELEPORT_PAUSE_MS = 320;
 /** 軌跡が消えるまで */
 const TRACE_FADE_MS = 1400;
+/** セクター1つぶんの角度（度）。ハンターの向きの積み増しに使う */
+const SECTOR_DEG = 45;
+
+interface HunterRefs {
+  group: SVGGElement;
+  turn: SVGGElement;
+  label: SVGTextElement;
+  /** 表示に使う「巻き戻らない」角度（度）。セクター0↔7をまたいでも逆回転して見えないよう、
+   * mod を取らずに dir 分だけ積み増していく */
+  angleDeg: number;
+  lastSector: number;
+}
+
+/** 血バッジ（携行血液数）の高さと、1桁あたりの目安幅。桁数が増えても数字が
+ *  円のフチに迫らないよう、丸から横に伸びるピル型にして幅だけ増やす */
+const BADGE_HEIGHT = 24;
+const BADGE_PAD_X = 7;
+const BADGE_DIGIT_WIDTH = 10;
+
+function badgeWidthFor(digits: number): number {
+  return Math.max(BADGE_HEIGHT, digits * BADGE_DIGIT_WIDTH + BADGE_PAD_X * 2);
+}
 
 interface PieceRefs {
   group: SVGGElement;
@@ -54,7 +76,7 @@ interface PieceRefs {
   body: SVGCircleElement;
   label: SVGTextElement;
   badge: SVGGElement;
-  badgeCircle: SVGCircleElement;
+  badgeShape: SVGRectElement;
   badgeCount: SVGTextElement;
 }
 
@@ -65,11 +87,15 @@ export class BoardView {
   private readonly stateLayer = el('g', { class: 'layer-state' });
   private readonly ghostLayer = el('g', { class: 'layer-ghosts' });
   private readonly markerLayer = el('g', { class: 'layer-markers' });
+  private readonly hunterLayer = el('g', { class: 'layer-hunters' });
   private readonly traceLayer = el('g', { class: 'layer-trace' });
   private readonly pieceLayer = el('g', { class: 'layer-pieces' });
   private readonly stateNodes = new Map<string, SVGCircleElement>();
   private readonly glowNodes = new Map<string, SVGGraphicsElement>();
   private readonly pieces = new Map<number, PieceRefs>();
+  private readonly hunters = new Map<number, HunterRefs>();
+  /** 血バッジが今どれだけ表示中か。移動アニメの最中は実値と切り離し、着地までは持ち帰り前の値を見せ続ける */
+  private readonly shownCarrying = new Map<number, number>();
   /** まだアニメーションに反映していない trail の先頭。TrailStep.seq と比較する */
   private nextTrailSeq = 0;
   private built = false;
@@ -87,6 +113,7 @@ export class BoardView {
       this.stateLayer,
       this.ghostLayer,
       this.markerLayer,
+      this.hunterLayer,
       this.traceLayer,
       this.pieceLayer,
     );
@@ -271,27 +298,50 @@ export class BoardView {
       this.markerLayer.append(mark);
     }
 
-    // 三角に番号を振る
+    this.renderHunters(state);
+  }
+
+  /**
+   * ハンターの三角は使い回しの駒（`g.hunter`）として持ち、位置と向きを
+   * transform で更新する。CSSの transition が滑りを作る ―― 駒（`.piece`）と同じ考え方。
+   * 向きの角度は mod せずに積み増す。セクター0↔7の境で 315°→0° のような
+   * 大きな戻り角にすると、逆回転しているように見えてしまうため
+   */
+  private renderHunters(state: GameState): void {
     state.hunters.forEach((hunter, i) => {
       const cell = state.board.cells[`r${hunter.ring}s${hunter.sector}`];
       const p = cellCenter(cell);
-      const group = el('g', { class: 'hunter' });
-      group.append(
-        el('path', {
-          d: trianglePath(p, 27, hunterFacingAngle(hunter, hunter.sector)),
-          class: 'hunter-body',
-        }),
-      );
-      const label = el('text', {
-        x: p.x,
-        y: p.y + 5,
-        class: 'hunter-label',
-        'text-anchor': 'middle',
-      });
-      label.textContent = String(i + 1);
-      group.append(label);
-      this.markerLayer.append(group);
+      const refs = this.ensureHunter(hunter, i, p);
+
+      if (hunter.sector !== refs.lastSector) {
+        refs.angleDeg += hunter.dir * SECTOR_DEG;
+        refs.lastSector = hunter.sector;
+      }
+
+      refs.group.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      refs.turn.style.transform = `rotate(${refs.angleDeg}deg)`;
     });
+  }
+
+  private ensureHunter(hunter: Hunter, index: number, at: Point): HunterRefs {
+    let refs = this.hunters.get(index);
+    if (refs) return refs;
+
+    const group = el('g', { class: 'hunter' });
+    const turn = el('g', { class: 'hunter-turn' });
+    turn.append(el('path', { d: trianglePath({ x: 0, y: 0 }, 27, 0), class: 'hunter-body' }));
+    const label = el('text', { y: 5, class: 'hunter-label', 'text-anchor': 'middle' });
+    label.textContent = String(index + 1);
+    group.append(turn, label);
+    this.hunterLayer.append(group);
+
+    const angleDeg = (hunterFacingAngle(hunter, hunter.sector) * 180) / Math.PI;
+    group.style.transform = `translate(${at.x}px, ${at.y}px)`;
+    turn.style.transform = `rotate(${angleDeg}deg)`;
+
+    refs = { group, turn, label, angleDeg, lastSector: hunter.sector };
+    this.hunters.set(index, refs);
+    return refs;
   }
 
   private ensurePiece(state: GameState, index: number): PieceRefs {
@@ -304,10 +354,10 @@ export class BoardView {
     const body = el('circle', { cx: 0, cy: 0, class: 'piece-body', fill: player.color });
     const label = el('text', { x: 0, y: 6, class: 'piece-label', 'text-anchor': 'middle' });
     label.textContent = String(index + 1);
-    const badgeCircle = el('circle', { cx: 0, cy: 0, r: 11 });
+    const badgeShape = el('rect', { x: 0, y: 0, width: BADGE_HEIGHT, height: BADGE_HEIGHT, rx: BADGE_HEIGHT / 2 });
     const badgeCount = el('text', { x: 0, y: 4, 'text-anchor': 'middle', class: 'piece-blood-count' });
     const badge = el('g', { class: 'piece-blood' });
-    badge.append(badgeCircle, badgeCount);
+    badge.append(badgeShape, badgeCount);
     group.append(shadow, body, label, badge);
     this.pieceLayer.append(group);
 
@@ -315,7 +365,7 @@ export class BoardView {
     const start = cellCenter(state.board.cells[player.at]);
     group.style.transform = `translate(${start.x}px, ${start.y}px)`;
 
-    refs = { group, shadow, body, label, badge, badgeCircle, badgeCount };
+    refs = { group, shadow, body, label, badge, badgeShape, badgeCount };
     this.pieces.set(index, refs);
     return refs;
   }
@@ -333,23 +383,30 @@ export class BoardView {
     refs.group.style.transform = `translate(${point.x}px, ${point.y}px)`;
   }
 
-  /** ラベル・血バッジ・見た目（現在番・大きさ）は毎フレーム即座に反映する。位置だけは別扱い */
-  private applyPieceLook(refs: PieceRefs, player: Player, stacked: boolean, isCurrent: boolean): void {
+  /**
+   * ラベル・見た目（現在番・大きさ）は毎フレーム即座に反映する。位置だけは別扱い。
+   * 血バッジだけは carrying を引数で受け取る ―― 城へ歩いて着くアニメの最中は
+   * 呼び出し側が「まだ持ち帰る前」の値を渡し続け、着地した瞬間に実値へ切り替える。
+   */
+  private applyPieceLook(refs: PieceRefs, stacked: boolean, isCurrent: boolean, carrying: number): void {
     const pieceRadius = stacked ? 13 : 17;
     refs.group.classList.toggle('is-current', isCurrent);
     refs.shadow.setAttribute('r', String(pieceRadius + 2));
     refs.body.setAttribute('r', String(pieceRadius));
     refs.label.setAttribute('y', String(stacked ? 5 : 6));
     refs.label.classList.toggle('is-small', stacked);
-    if (player.carrying > 0) {
+    if (carrying > 0) {
       refs.badge.style.display = '';
-      const badgeX = pieceRadius + 1;
+      const text = String(carrying);
+      const width = badgeWidthFor(text.length);
+      const badgeX = pieceRadius + 1 + (width - BADGE_HEIGHT) / 2;
       const badgeY = -pieceRadius + 1;
-      refs.badgeCircle.setAttribute('cx', String(badgeX));
-      refs.badgeCircle.setAttribute('cy', String(badgeY));
+      refs.badgeShape.setAttribute('x', String(badgeX - width / 2));
+      refs.badgeShape.setAttribute('y', String(badgeY - BADGE_HEIGHT / 2));
+      refs.badgeShape.setAttribute('width', String(width));
       refs.badgeCount.setAttribute('x', String(badgeX));
       refs.badgeCount.setAttribute('y', String(badgeY + 5));
-      refs.badgeCount.textContent = String(player.carrying);
+      refs.badgeCount.textContent = text;
     } else {
       refs.badge.style.display = 'none';
     }
@@ -405,6 +462,11 @@ export class BoardView {
     const runStep = (i: number): void => {
       if (i >= steps.length) {
         this.placePiece(refs, finalPos, true);
+        // 着地した瞬間に、見せていた血の量を実際の値（城なら持ち帰り済みで0）へ切り替える
+        const player = state.players[index];
+        const stackedNow = state.players.filter((p) => p.at === player.at).length > 1;
+        this.shownCarrying.set(index, player.carrying);
+        this.applyPieceLook(refs, stackedNow, index === state.current, player.carrying);
         return;
       }
       const step = steps[i];
@@ -433,12 +495,6 @@ export class BoardView {
       list.push(p.index);
       byCell.set(p.at, list);
     }
-    for (const indices of byCell.values()) {
-      for (const index of indices) {
-        const refs = this.ensurePiece(state, index);
-        this.applyPieceLook(refs, state.players[index], indices.length > 1, index === state.current);
-      }
-    }
 
     const newSteps = state.trail.filter((t) => t.seq >= this.nextTrailSeq);
     this.nextTrailSeq = state.trailSeq;
@@ -448,6 +504,22 @@ export class BoardView {
       const list = chains.get(step.player) ?? [];
       list.push(step);
       chains.set(step.player, list);
+    }
+
+    for (const indices of byCell.values()) {
+      for (const index of indices) {
+        const refs = this.ensurePiece(state, index);
+        const player = state.players[index];
+        const stacked = indices.length > 1;
+        const isCurrent = index === state.current;
+        if (chains.has(index)) {
+          // 歩いて城に着くまでは、持ち帰り前の血の量を見せ続ける
+          this.applyPieceLook(refs, stacked, isCurrent, this.shownCarrying.get(index) ?? player.carrying);
+        } else {
+          this.shownCarrying.set(index, player.carrying);
+          this.applyPieceLook(refs, stacked, isCurrent, player.carrying);
+        }
+      }
     }
 
     let totalMs = 0;

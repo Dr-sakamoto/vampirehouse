@@ -102,15 +102,13 @@ export interface Player {
   parasol: boolean;
   /** 今ターンに洞窟を訪れたか（1ターン1枚まで） */
   lootedCaveThisTurn: boolean;
-  /** 今ターンに噛みついたか（1ターン1回まで） */
-  bitThisTurn: boolean;
-  /** 《強襲》を切ったターンか。通り抜けたマスの相手をスタンさせる */
+  /** 《強襲》を切ったターンか。通り抜けたマスの相手を組み伏せる */
   rushing: boolean;
   /** 通算の死亡回数（同点時のタイブレーク・統計用） */
   deaths: number;
   /** 通算で城に持ち帰った血の本数（得点とは別。まとめ持ち帰りボーナスと最終夜ボーナスがあるため） */
   delivered: number;
-  /** 通算で他プレイヤーから奪った血の本数（噛みつき・強奪・仕留めの合計。統計用） */
+  /** 通算で他プレイヤーから奪った血の本数（強奪・仕留めの合計。統計用） */
   stolen: number;
   /** 通算で他プレイヤーを死なせた回数（統計用） */
   kills: number;
@@ -140,6 +138,13 @@ export interface LogEntry {
   night: number;
   text: string;
   tone: 'info' | 'good' | 'bad' | 'warn';
+}
+
+/** コウモリ使用1回ぶんの記録（演出用）。誰が何を使ったかをUIのカットインへ渡す */
+export interface BatPlayEvent {
+  seq: number;
+  player: number;
+  kind: BatKind;
 }
 
 export interface GameConfig {
@@ -201,5 +206,8 @@ export interface GameState {
   /** 駒移動の記録（演出用）。直近のみ保持する */
   trail: TrailStep[];
   trailSeq: number;
+  /** コウモリ使用の記録（演出用）。直近のみ保持する */
+  batPlays: BatPlayEvent[];
+  batPlaySeq: number;
   rngState: number;
 }
