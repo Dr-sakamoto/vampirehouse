@@ -475,6 +475,41 @@ function bite(state: GameState, attacker: Player, cellIdAt: string): void {
   );
 }
 
+/**
+ * 《強襲》が当たったときの処理 ―― 相手を組み伏せ、抱えていた血をすべて奪い、
+ * その場に押さえて足を止める。仕留めはしない。
+ *
+ * 以前は「仕留める」（血を奪ったうえで城へ送り返す）だったが、ボット200戦で
+ * 測ると**強襲が動かす血は仕留めても組み伏せても変わらなかった**
+ * （48/106/149 → 52/107/156）。この札の重さは最初から積荷のほうにあって、
+ * 城へ送り返す部分ではなかった ―― つまり仕留めを外しても札は弱くならず、
+ * 「一夜の労働と盤上の位置を同時に消される」理不尽さだけが落ちる
+ * （[`docs/balance.md`](../../docs/balance.md) §2）。
+ *
+ * 奪い高を半分にする案は落とした。噛みつきが無料で半分を取る以上
+ * （§6）、札を1枚払って同じ額になり、**札が何もしない対照と得点も勝差も
+ * 一致した**。カードは無料の手より重くなければ、置く意味が無い。
+ *
+ * 足を止めるほうは残す。コウモリは締め出しの札に絞ってあり、予告ラウンドに
+ * 当てれば椅子に届かなくなる ―― 血を奪われたうえで日向に置き去りにされる、
+ * というのが「組み伏せる」の素直な絵でもある。仕留めていた頃はここが逆で、
+ * 城は日陰なので**送り返すことが助けになっていた**。
+ *
+ * 即死ではなくなったので、蝙蝠傘（陽光とハンターの肩代わり）では防げない。
+ */
+function pinDown(state: GameState, attacker: Player, victim: Player): void {
+  const loot = victim.carrying;
+  if (loot > 0) {
+    transferBlood(attacker, victim, loot);
+    pushLog(
+      state,
+      `${attacker.name} が ${victim.name} を組み伏せ、血 ${loot} を奪った（運搬中 ${attacker.carrying}）。`,
+      'bad',
+    );
+  }
+  stun(state, victim, `${attacker.name} に組み伏せられ`);
+}
+
 /** 1マス移動する。移動できたら true */
 export function moveTo(state: GameState, target: string): boolean {
   if (state.phase !== 'playing') return false;
@@ -507,7 +542,7 @@ export function moveTo(state: GameState, target: string): boolean {
 
   const cell = state.board.cells[target];
 
-  // 《強襲》を切っていれば、通り抜けたマスにいる相手を仕留める。
+  // 《強襲》を切っていれば、通り抜けたマスにいる相手を組み伏せる。
   //
   // 当たる機会そのものが少ない札（相手のマスへちょうど乗る精度が要る）なので、
   // 当たり判定を広げるのではなく一撃を重くしてある ―― 決まれば相手の血は
@@ -515,7 +550,7 @@ export function moveTo(state: GameState, target: string): boolean {
   if (player.rushing) {
     for (const p of state.players) {
       if (p.index !== player.index && p.at === target) {
-        killPlayer(state, p, `${player.name} に組み伏せられた`, player);
+        pinDown(state, player, p);
       }
     }
   }
@@ -739,10 +774,10 @@ export function playBat(state: GameState, uid: string, target: BatTarget = {}): 
     }
     case 'rush': {
       player.rushing = true;
-      // 既に同じマスに立っている相手は、踏み込み直すまでもなくその場で仕留める
+      // 既に同じマスに立っている相手は、踏み込み直すまでもなくその場で組み伏せる
       for (const p of state.players) {
         if (p.index !== player.index && p.at === player.at) {
-          killPlayer(state, p, `${player.name} に組み伏せられた`, player);
+          pinDown(state, player, p);
         }
       }
       pushLog(state, `${player.name} が《${spec.name}》の構えを取った。`, 'info');

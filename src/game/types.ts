@@ -96,7 +96,7 @@ export interface Player {
   lootedCaveThisTurn: boolean;
   /** 今ターンに噛みついたか（1ターン1回まで） */
   bitThisTurn: boolean;
-  /** 《強襲》を切ったターンか。通り抜けたマスの相手をスタンさせる */
+  /** 《強襲》を切ったターンか。通り抜けたマスの相手を組み伏せる */
   rushing: boolean;
   /** 通算の死亡回数（同点時のタイブレーク・統計用） */
   deaths: number;
