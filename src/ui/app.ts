@@ -207,7 +207,7 @@ export class App {
         <li><b>目的</b> 中心の村（${ICON.blood}）で血を吸い、四隅の自分の城（${ICON.castle}）へ持ち帰る。抱えた血の数字がそのまま得点 ―― <b>持ち帰るまでは0点</b>。</li>
         <li><b>移動</b> 毎ターン ${this.state.config.baseMove} 歩。同心円に沿って横へ、放射線に沿って内外へ。</li>
         <li><b>吸血</b> 村でターンを終えるたびに血を吸える。いくつ出るかは振ってみるまで分からない。抱えても足は鈍らない。</li>
-        <li><b>${ICON.dawn} 夜明け</b> 1つの夜は <b>${ICON.night} → ${ICON.waning} → ${ICON.dawn}</b> と移る。最初の数ラウンドは必ず夜（${ICON.night}）、それを過ぎると毎ラウンド確率で空が白み（${ICON.waning}・%表示）、白んだら（${ICON.dawn}）そのラウンドの終わりに必ず朝が来る。避難所（${ICON.shade}/${ICON.bat}）か城にいない者は焼かれ、抱えた血をすべて失う。</li>
+        <li><b>${ICON.dawn} 夜明け</b> 1つの夜は <b>${ICON.night} → ${ICON.waning} → ${ICON.dawn}</b> と移る。最初の数ラウンドは必ず夜（${ICON.night}）、それを過ぎると空が白む可能性が出てきて（${ICON.waning}）、白んだら（${ICON.dawn}）そのラウンドの終わりに必ず朝が来る。避難所（${ICON.shade}/${ICON.bat}）か城にいない者は焼かれ、抱えた血をすべて失う。</li>
         <li><b>${ICON.hunter} ハンター</b> リング2を周回する。触れれば即死。次の一歩は盤面に予告される。</li>
         <li><b>${ICON.bat} 洞窟</b> 最外リングの左右だけ。通るとコウモリ（発展カード）を引ける。</li>
         <li><b>決着</b> 全 ${this.state.config.totalNights} 夜が明けたら終わり。最終夜は村の血が濃くなる。</li>
@@ -223,7 +223,7 @@ export class App {
       <ul class="legend-list">
         <li><span class="legend-boxes">${boxes(4, 1, 1)}</span> ゲーム全体の進捗 ―― 消化した夜の数</li>
         <li><span class="stat">${ICON.night}</span> この夜はまだ確定で夜（残りラウンド数を表示）</li>
-        <li><span class="stat">${ICON.waning}</span> 確定の夜は尽きた ―― 毎ラウンド、表示の確率で空が白む</li>
+        <li><span class="stat">${ICON.waning}</span> 確定の夜は尽きた ―― いつ空が白んでもおかしくない</li>
         <li><span class="stat">${ICON.dawn}</span> 空が白んだ ―― このラウンドの終わりに必ず朝</li>
         <li><span class="stat safe">${ICON.shade}</span> 夜明けが来ても安全</li>
         <li><span class="stat exposed">${ICON.dawn}</span> 陽の下 ―― 夜明けが来れば灰になる</li>
@@ -406,7 +406,7 @@ export class App {
           ? {
               icon: ICON.waning,
               cls: 'is-waning',
-              text: `${pct}%で夜明け`,
+              text: '夜明けが近い',
               title: `確定の夜は尽きた。このラウンドの終わりに ${pct}% で空が白む`,
             }
           : {
