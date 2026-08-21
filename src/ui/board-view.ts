@@ -6,7 +6,7 @@ import {
   legalMoves,
   dawnRisk,
 } from '../game/rules';
-import type { Cell, GameState, Hunter, Player, TrailStep } from '../game/types';
+import type { Cell, GameState, Hunter, TrailStep } from '../game/types';
 import {
   CASTLE_RING,
   CENTER,
@@ -94,6 +94,8 @@ export class BoardView {
   private readonly glowNodes = new Map<string, SVGGraphicsElement>();
   private readonly pieces = new Map<number, PieceRefs>();
   private readonly hunters = new Map<number, HunterRefs>();
+  /** 血バッジが今どれだけ表示中か。移動アニメの最中は実値と切り離し、着地までは持ち帰り前の値を見せ続ける */
+  private readonly shownCarrying = new Map<number, number>();
   /** まだアニメーションに反映していない trail の先頭。TrailStep.seq と比較する */
   private nextTrailSeq = 0;
   private built = false;
@@ -381,17 +383,21 @@ export class BoardView {
     refs.group.style.transform = `translate(${point.x}px, ${point.y}px)`;
   }
 
-  /** ラベル・血バッジ・見た目（現在番・大きさ）は毎フレーム即座に反映する。位置だけは別扱い */
-  private applyPieceLook(refs: PieceRefs, player: Player, stacked: boolean, isCurrent: boolean): void {
+  /**
+   * ラベル・見た目（現在番・大きさ）は毎フレーム即座に反映する。位置だけは別扱い。
+   * 血バッジだけは carrying を引数で受け取る ―― 城へ歩いて着くアニメの最中は
+   * 呼び出し側が「まだ持ち帰る前」の値を渡し続け、着地した瞬間に実値へ切り替える。
+   */
+  private applyPieceLook(refs: PieceRefs, stacked: boolean, isCurrent: boolean, carrying: number): void {
     const pieceRadius = stacked ? 13 : 17;
     refs.group.classList.toggle('is-current', isCurrent);
     refs.shadow.setAttribute('r', String(pieceRadius + 2));
     refs.body.setAttribute('r', String(pieceRadius));
     refs.label.setAttribute('y', String(stacked ? 5 : 6));
     refs.label.classList.toggle('is-small', stacked);
-    if (player.carrying > 0) {
+    if (carrying > 0) {
       refs.badge.style.display = '';
-      const text = String(player.carrying);
+      const text = String(carrying);
       const width = badgeWidthFor(text.length);
       const badgeX = pieceRadius + 1 + (width - BADGE_HEIGHT) / 2;
       const badgeY = -pieceRadius + 1;
@@ -456,6 +462,11 @@ export class BoardView {
     const runStep = (i: number): void => {
       if (i >= steps.length) {
         this.placePiece(refs, finalPos, true);
+        // 着地した瞬間に、見せていた血の量を実際の値（城なら持ち帰り済みで0）へ切り替える
+        const player = state.players[index];
+        const stackedNow = state.players.filter((p) => p.at === player.at).length > 1;
+        this.shownCarrying.set(index, player.carrying);
+        this.applyPieceLook(refs, stackedNow, index === state.current, player.carrying);
         return;
       }
       const step = steps[i];
@@ -484,12 +495,6 @@ export class BoardView {
       list.push(p.index);
       byCell.set(p.at, list);
     }
-    for (const indices of byCell.values()) {
-      for (const index of indices) {
-        const refs = this.ensurePiece(state, index);
-        this.applyPieceLook(refs, state.players[index], indices.length > 1, index === state.current);
-      }
-    }
 
     const newSteps = state.trail.filter((t) => t.seq >= this.nextTrailSeq);
     this.nextTrailSeq = state.trailSeq;
@@ -499,6 +504,22 @@ export class BoardView {
       const list = chains.get(step.player) ?? [];
       list.push(step);
       chains.set(step.player, list);
+    }
+
+    for (const indices of byCell.values()) {
+      for (const index of indices) {
+        const refs = this.ensurePiece(state, index);
+        const player = state.players[index];
+        const stacked = indices.length > 1;
+        const isCurrent = index === state.current;
+        if (chains.has(index)) {
+          // 歩いて城に着くまでは、持ち帰り前の血の量を見せ続ける
+          this.applyPieceLook(refs, stacked, isCurrent, this.shownCarrying.get(index) ?? player.carrying);
+        } else {
+          this.shownCarrying.set(index, player.carrying);
+          this.applyPieceLook(refs, stacked, isCurrent, player.carrying);
+        }
+      }
     }
 
     let totalMs = 0;
