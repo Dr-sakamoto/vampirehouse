@@ -185,3 +185,70 @@ html, body {
 @media (orientation: portrait) {
   .minimap { top: auto; right: auto; left: 10px; bottom: max(28px, env(safe-area-inset-bottom)); }
 }
+
+/* ---- 一人称 ---- */
+
+/* 画面全体の色。日なたは朝焼け、影の中は青。フォートナイトのストームと同じく、外にいることを色で突きつける */
+.filter {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
+}
+.filter.sun {
+  opacity: var(--k, 0.5);
+  background:
+    radial-gradient(ellipse at center, rgba(255, 140, 50, 0.22) 30%, rgba(255, 60, 20, 0.85) 100%),
+    rgba(255, 120, 40, 0.18);
+}
+.filter.sun.urgent { animation: burn-pulse 0.5s ease-in-out infinite alternate; }
+@keyframes burn-pulse {
+  from { opacity: var(--k, 0.8); }
+  to { opacity: 1; }
+}
+.filter.shade {
+  opacity: 1;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(40, 140, 230, 0.45) 100%);
+}
+.filter.burnt {
+  opacity: 1;
+  background: radial-gradient(ellipse at center, rgba(255, 240, 220, 0.75), rgba(255, 120, 40, 0.9));
+}
+
+.crosshair {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: rgba(236, 232, 242, 0.7);
+  pointer-events: none;
+}
+.fps .crosshair { display: block; }
+
+.look-zone {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 60px;
+  bottom: 0;
+  width: 45%;
+  touch-action: none;
+}
+.fps .look-zone { display: block; }
+
+.viewbtn {
+  pointer-events: auto;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 20px;
+  border: 1px solid #322f40;
+  background: rgba(20, 19, 26, 0.85);
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+}

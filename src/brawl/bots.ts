@@ -48,7 +48,7 @@ export class BotBrain {
       this.decidedAt.clear();
     }
     const me = world.players[id];
-    if (world.phase !== 'run') return { seq, mx: 0, my: 0, shove: false };
+    if (world.phase !== 'run') return { seq, mx: 0, my: 0, ax: 0, ay: 0, shove: false };
     const nav = this.nav!;
 
     // 行き先は0.5秒ごとに考え直す（押し出されて間に合わなくなったら乗り換える）
@@ -82,10 +82,10 @@ export class BotBrain {
     }
 
     const len = Math.hypot(mx, my);
-    if (len < 0.15) return { seq, mx: 0, my: 0, shove: false };
+    if (len < 0.15) return { seq, mx: 0, my: 0, ax: 0, ay: 0, shove: false };
     // 人間らしい反応の遅さ：毎回は押さない
     const shove = target !== null && best < PLAYER_RADIUS * 2 + params.shoveReach && jitter(world.tick, id) < 0.35;
-    return { seq, mx: mx / len, my: my / len, shove };
+    return { seq, mx: mx / len, my: my / len, ax: 0, ay: 0, shove };
   }
 
   private choose(world: World, me: Player, params: Params, nav: Nav): Goal {

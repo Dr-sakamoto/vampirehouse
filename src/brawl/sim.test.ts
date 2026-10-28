@@ -23,8 +23,8 @@ function place(w: World, id: number, x: number, y: number, blood = 0): void {
   p.blood = blood;
 }
 
-function input(seq: number, mx = 0, my = 0, shove = false): Input {
-  return { seq, mx, my, shove };
+function input(seq: number, mx = 0, my = 0, shove = false, ax = 0, ay = 0): Input {
+  return { seq, mx, my, ax, ay, shove };
 }
 
 describe('夜明けの乱闘', () => {
@@ -68,6 +68,17 @@ describe('夜明けの乱闘', () => {
       return w.players[1].x - 6.1;
     };
     expect(distAfterShove(100)).toBeLessThan(distAfterShove(0) * 0.6);
+  });
+
+  it('向きを指定すれば、歩く方向ではなく見ている方向へ突き飛ばす', () => {
+    const w = running();
+    place(w, 0, 5, 5);
+    place(w, 1, 5, 6.1);
+    // 東へ歩きながら、南（+y）を見て押す
+    step(w, new Map([[0, input(1, 1, 0, true, 0, 1)]]), P, DT);
+    expect(w.players[0].fx).toBeCloseTo(0);
+    expect(w.players[0].fy).toBeCloseTo(1);
+    expect(w.shoves[0].hit).toEqual([1]);
   });
 
   it('連打は最短間隔より速くは効かない', () => {

@@ -60,11 +60,17 @@ export interface Input {
   /** 移動方向（長さ1以下） */
   mx: number;
   my: number;
+  /**
+   * 向いている方向（長さ1、または 0,0）。一人称視点では視線がそのまま向きになり、
+   * 突き飛ばしは歩く方向ではなく見ている方向へ出る。0,0 なら歩く方向を向く（見下ろし視点）
+   */
+  ax: number;
+  ay: number;
   /** この入力の瞬間に突き飛ばしボタンが押された */
   shove: boolean;
 }
 
-export const IDLE_INPUT: Input = { seq: 0, mx: 0, my: 0, shove: false };
+export const IDLE_INPUT: Input = { seq: 0, mx: 0, my: 0, ax: 0, ay: 0, shove: false };
 
 export interface Player {
   id: number;
@@ -262,6 +268,11 @@ export function step(world: World, inputs: ReadonlyMap<number, Input>, params: P
       p.y += input.my * scale * speed * dt;
       p.fx = input.mx / len;
       p.fy = input.my / len;
+    }
+    const aim = Math.hypot(input.ax, input.ay);
+    if (aim > 0.05) {
+      p.fx = input.ax / aim;
+      p.fy = input.ay / aim;
     }
   }
 

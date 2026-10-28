@@ -89,8 +89,8 @@ export class PredictingClient {
   }
 
   /** 1tick分の入力を作って予測を進め、サーバーへ送るべき入力を返す */
-  advance(mx: number, my: number, shove: boolean, params: Params): Input {
-    const input: Input = { seq: ++this.seq, mx, my, shove };
+  advance(mx: number, my: number, ax: number, ay: number, shove: boolean, params: Params): Input {
+    const input: Input = { seq: ++this.seq, mx, my, ax, ay, shove };
     this.pending.push(input);
     step(this.world, this.inputsFor(input), params, DT);
     return input;

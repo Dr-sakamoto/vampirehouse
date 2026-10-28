@@ -2,7 +2,7 @@
 
 import { LagChannel, LocalServer, PredictingClient, DT, type Snapshot } from './net';
 import { DEFAULT_PARAMS, refugeOf, shadeCountFor, type Input, type Params } from './sim';
-import { BrawlView, colorOf, drawMinimap } from './view';
+import { BrawlView, colorOf, dawnOf, drawMinimap, lookForward, type Look, type ViewMode } from './view';
 import './brawl.css';
 
 const ME = 0;
@@ -11,13 +11,14 @@ interface Settings {
   params: Params;
   latencyMs: number;
   players: number;
+  view: ViewMode;
 }
 
 // 地形を作り直したので、古い調整値（夜明けまでの時間など）は持ち越さない
 const SETTINGS_KEY = 'vampirehouse-brawl-settings-v2';
 
 function loadSettings(): Settings {
-  const base: Settings = { params: { ...DEFAULT_PARAMS }, latencyMs: 0, players: 4 };
+  const base: Settings = { params: { ...DEFAULT_PARAMS }, latencyMs: 0, players: 4, view: 'fps' };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<Settings> | null;
     if (saved) return { ...base, ...saved, params: { ...base.params, ...saved.params } };
@@ -40,16 +41,20 @@ const settings = loadSettings();
 const root = document.getElementById('brawl')!;
 root.innerHTML = `
   <div class="stage"></div>
+  <div class="filter"></div>
+  <div class="crosshair"></div>
   <canvas class="minimap"></canvas>
   <div class="hud">
     <div class="top">
       <div class="layout"></div>
       <div class="board"></div>
+      <button class="viewbtn"></button>
       <button class="gear" aria-label="調整">⚙</button>
     </div>
     <div class="center"><div class="count"></div><div class="msg"></div></div>
   </div>
   <div class="stick-zone"><div class="stick-base"><div class="stick-knob"></div></div></div>
+  <div class="look-zone"></div>
   <button class="shove">突き<br>飛ばし</button>
   <div class="panel" hidden></div>
 `;
@@ -61,9 +66,24 @@ const boardEl = root.querySelector<HTMLElement>('.board')!;
 const layoutEl = root.querySelector<HTMLElement>('.layout')!;
 const panel = root.querySelector<HTMLElement>('.panel')!;
 const minimap = root.querySelector<HTMLCanvasElement>('.minimap')!;
+const filterEl = root.querySelector<HTMLElement>('.filter')!;
+const viewBtn = root.querySelector<HTMLButtonElement>('.viewbtn')!;
 
 const view = new BrawlView(stage);
 window.addEventListener('resize', () => view.resize());
+
+function applyViewMode(): void {
+  view.setMode(settings.view);
+  root.classList.toggle('fps', settings.view === 'fps');
+  viewBtn.textContent = settings.view === 'fps' ? '見下ろしへ' : '一人称へ';
+  if (settings.view !== 'fps' && document.pointerLockElement) document.exitPointerLock();
+}
+viewBtn.addEventListener('click', () => {
+  settings.view = settings.view === 'fps' ? 'top' : 'fps';
+  saveSettings(settings);
+  applyViewMode();
+});
+applyViewMode();
 
 // ---- 入力 ----------------------------------------------------------------
 
@@ -81,10 +101,64 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 
 function keyboardMove(): { x: number; y: number } {
-  const x = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+  // 一人称では左右の矢印は「向きを変える」に使うので、横歩きは A／D だけ
+  const fps = settings.view === 'fps';
+  const right = keys.has('KeyD') || (!fps && keys.has('ArrowRight'));
+  const left = keys.has('KeyA') || (!fps && keys.has('ArrowLeft'));
+  const x = (right ? 1 : 0) - (left ? 1 : 0);
   const y = (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0) - (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0);
   return { x, y };
 }
+
+// ---- 一人称の視線 ----------------------------------------------------------
+
+const look: Look = { yaw: 0, pitch: -0.08 };
+const PITCH_MIN = -0.7;
+const PITCH_MAX = 0.6;
+
+function turn(dYaw: number, dPitch: number): void {
+  look.yaw += dYaw;
+  look.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, look.pitch + dPitch));
+}
+
+// 右側をドラッグすると視点が回る。動かさずに短く触れて離せば突き飛ばし
+// （視点を回している親指のまま押せるように）
+const lookZone = root.querySelector<HTMLElement>('.look-zone')!;
+const LOOK_SPEED = 0.006;
+let lookPointer: number | null = null;
+let lookLast = { x: 0, y: 0 };
+let lookStart = { x: 0, y: 0, t: 0 };
+
+lookZone.addEventListener('pointerdown', (e) => {
+  lookPointer = e.pointerId;
+  lookZone.setPointerCapture(e.pointerId);
+  lookLast = { x: e.clientX, y: e.clientY };
+  lookStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+});
+lookZone.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== lookPointer) return;
+  turn((e.clientX - lookLast.x) * LOOK_SPEED, -(e.clientY - lookLast.y) * LOOK_SPEED * 0.7);
+  lookLast = { x: e.clientX, y: e.clientY };
+});
+const releaseLook = (e: PointerEvent): void => {
+  if (e.pointerId !== lookPointer) return;
+  lookPointer = null;
+  const moved = Math.hypot(e.clientX - lookStart.x, e.clientY - lookStart.y);
+  if (e.type === 'pointerup' && moved < 12 && performance.now() - lookStart.t < 250) shoveQueued = true;
+};
+lookZone.addEventListener('pointerup', releaseLook);
+lookZone.addEventListener('pointercancel', releaseLook);
+
+// PC: 画面をクリックするとマウスで視点を回せる（Esc で解除）。捕まえている間はクリックで突き飛ばし
+stage.addEventListener('click', () => {
+  if (settings.view === 'fps' && !document.pointerLockElement) stage.requestPointerLock?.();
+});
+document.addEventListener('mousemove', (e) => {
+  if (document.pointerLockElement === stage) turn(e.movementX * 0.0025, -e.movementY * 0.0025);
+});
+document.addEventListener('mousedown', (e) => {
+  if (document.pointerLockElement === stage && e.button === 0) shoveQueued = true;
+});
 
 // 左半分のどこに触れても、そこを中心にスティックが出る
 const zone = root.querySelector<HTMLElement>('.stick-zone')!;
@@ -159,17 +233,40 @@ restart();
 
 let last = performance.now();
 let acc = 0;
+let lookRound = -1;
 
 function frame(now: number): void {
   acc += Math.min(0.25, (now - last) / 1000);
   last = now;
 
+  // 新しい戦が始まったら、走り出す向き（村の外側）へ視線を戻す
+  const meNow = client.world.players[ME];
+  if (client.world.round !== lookRound) {
+    lookRound = client.world.round;
+    look.yaw = Math.atan2(meNow.fx, -meNow.fy);
+    look.pitch = -0.08;
+  }
+
   while (acc >= DT) {
     acc -= DT;
+    const fps = settings.view === 'fps';
+    if (fps) turn(((keys.has('ArrowRight') || keys.has('KeyE') ? 1 : 0) - (keys.has('ArrowLeft') || keys.has('KeyQ') ? 1 : 0)) * 2.4 * DT, 0);
     const kb = keyboardMove();
-    const mx = Math.max(-1, Math.min(1, move.x + kb.x));
-    const my = Math.max(-1, Math.min(1, move.y + kb.y));
-    const input = client.advance(mx, my, shoveQueued, settings.params);
+    let sx = Math.max(-1, Math.min(1, move.x + kb.x));
+    let sy = Math.max(-1, Math.min(1, move.y + kb.y));
+    let ax = 0;
+    let ay = 0;
+    if (fps) {
+      // スティックの上＝見ている方向。右＝その右手
+      const f = lookForward(look);
+      const mx = f.x * -sy + -f.y * sx;
+      const my = f.y * -sy + f.x * sx;
+      sx = mx;
+      sy = my;
+      ax = f.x;
+      ay = f.y;
+    }
+    const input = client.advance(sx, sy, ax, ay, shoveQueued, settings.params);
     shoveQueued = false;
     up.send(input, now);
 
@@ -181,14 +278,31 @@ function frame(now: number): void {
   }
 
   const world = client.world;
-  view.render(world, settings.params, ME);
+  view.render(world, settings.params, ME, look);
   drawMinimap(minimap, world, ME);
   updateHud();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
+/**
+ * 画面全体の色。フォートナイトのストームのように、日なたにいる間は朝焼けの色が濃く被さる。
+ * 影の中・自分の城では青く落ち着く。生死を分けるのは体の中心なので、その一点で判定する
+ */
+function updateFilter(): void {
+  const world = client.world;
+  const me = world.players[ME];
+  let state = '';
+  if (world.phase === 'run') state = refugeOf(me, world) ? 'shade' : 'sun';
+  else if (world.phase === 'result' && !me.alive) state = 'burnt';
+  filterEl.className = `filter ${state}`;
+  const k = state === 'sun' ? 0.35 + dawnOf(world, settings.params) * 0.65 : 1;
+  filterEl.style.setProperty('--k', k.toFixed(2));
+  filterEl.classList.toggle('urgent', state === 'sun' && world.phaseLeft <= 3);
+}
+
 function updateHud(): void {
+  updateFilter();
   const world = client.world;
   const me = world.players[ME];
   const shades = shadeCountFor(world, settings.params);
@@ -271,7 +385,7 @@ function renderPanel(): void {
       <button data-act="reset">既定値に戻す</button>
       <button data-act="close">閉じる</button>
     </div>
-    <p class="note">遅延・人数・廃墟の広さを変えると対戦をやり直す。影の数は次の戦から、ほかのつまみは次の瞬間から効く。PCでは WASD／矢印キーで移動、スペースで突き飛ばし。</p>
+    <p class="note">遅延・人数・廃墟の広さを変えると対戦をやり直す。影の数は次の戦から、ほかのつまみは次の瞬間から効く。一人称では、右側をドラッグで視点、右側を短くタップでも突き飛ばし。PCでは WASD で移動、←→／Q・E で向きを変える（画面をクリックするとマウスで視点、クリックで突き飛ばし）、スペースで突き飛ばし。</p>
   `;
 }
 
