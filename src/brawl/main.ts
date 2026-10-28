@@ -1,8 +1,8 @@
 // 夜明けの乱闘（試作3）の入口。操作・HUD・調整つまみと、サーバー／クライアントの時計を回す。
 
 import { LagChannel, LocalServer, PredictingClient, DT, type Snapshot } from './net';
-import { DEFAULT_PARAMS, LAYOUTS, LAYOUT_NAMES, isInShelter, type Input, type Layout, type Params } from './sim';
-import { BrawlView, PLAYER_COLORS } from './view';
+import { DEFAULT_PARAMS, refugeOf, shadeCountFor, type Input, type Params } from './sim';
+import { BrawlView, colorOf, drawMinimap } from './view';
 import './brawl.css';
 
 const ME = 0;
@@ -11,13 +11,13 @@ interface Settings {
   params: Params;
   latencyMs: number;
   players: number;
-  layout: Layout | 'random';
 }
 
-const SETTINGS_KEY = 'vampirehouse-brawl-settings';
+// 地形を作り直したので、古い調整値（夜明けまでの時間など）は持ち越さない
+const SETTINGS_KEY = 'vampirehouse-brawl-settings-v2';
 
 function loadSettings(): Settings {
-  const base: Settings = { params: { ...DEFAULT_PARAMS }, latencyMs: 0, players: 4, layout: 'random' };
+  const base: Settings = { params: { ...DEFAULT_PARAMS }, latencyMs: 0, players: 4 };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null') as Partial<Settings> | null;
     if (saved) return { ...base, ...saved, params: { ...base.params, ...saved.params } };
@@ -40,6 +40,7 @@ const settings = loadSettings();
 const root = document.getElementById('brawl')!;
 root.innerHTML = `
   <div class="stage"></div>
+  <canvas class="minimap"></canvas>
   <div class="hud">
     <div class="top">
       <div class="layout"></div>
@@ -59,6 +60,7 @@ const msgEl = root.querySelector<HTMLElement>('.msg')!;
 const boardEl = root.querySelector<HTMLElement>('.board')!;
 const layoutEl = root.querySelector<HTMLElement>('.layout')!;
 const panel = root.querySelector<HTMLElement>('.panel')!;
+const minimap = root.querySelector<HTMLCanvasElement>('.minimap')!;
 
 const view = new BrawlView(stage);
 window.addEventListener('resize', () => view.resize());
@@ -148,7 +150,7 @@ let up!: LagChannel<Input>;
 let down!: LagChannel<Snapshot>;
 
 function restart(): void {
-  server = new LocalServer(settings.players, settings.params, settings.layout === 'random' ? null : settings.layout);
+  server = new LocalServer(settings.players, settings.params);
   client = new PredictingClient(ME, server.world);
   up = new LagChannel<Input>(settings.latencyMs / 2);
   down = new LagChannel<Snapshot>(settings.latencyMs / 2);
@@ -180,6 +182,7 @@ function frame(now: number): void {
 
   const world = client.world;
   view.render(world, settings.params, ME);
+  drawMinimap(minimap, world, ME);
   updateHud();
   requestAnimationFrame(frame);
 }
@@ -188,31 +191,31 @@ requestAnimationFrame(frame);
 function updateHud(): void {
   const world = client.world;
   const me = world.players[ME];
-  layoutEl.textContent = `第${world.round}戦 ・ ${LAYOUT_NAMES[world.layout]}${settings.latencyMs > 0 ? ` ・ 遅延${settings.latencyMs}ms` : ''}`;
+  const shades = shadeCountFor(world, settings.params);
+  layoutEl.textContent = `第${world.round}戦 ・ 影${shades}か所${settings.latencyMs > 0 ? ` ・ 遅延${settings.latencyMs}ms` : ''}`;
 
   if (world.phase === 'ready') {
     countEl.textContent = '';
-    msgEl.textContent = `血 ${me.blood}dL ―― 空が白んだ。影へ走れ`;
+    msgEl.textContent = `血 ${me.blood}dL ―― 雲が切れた。青い廃墟か、白枠の自分の城へ`;
   } else if (world.phase === 'run') {
     const left = Math.ceil(world.phaseLeft);
-    countEl.textContent = left <= 5 ? String(left) : '';
+    countEl.textContent = String(left);
     countEl.classList.toggle('urgent', left <= 3);
-    msgEl.textContent = left > 5 ? `血 ${me.blood}dL` : '';
+    msgEl.textContent = '';
   } else {
     countEl.textContent = '';
     const burnt = world.players.filter((p) => !p.alive).map((p) => p.name);
+    const where = me.refuge === 'castle' ? '城に帰り着いた' : '影の中で生き延びた';
     msgEl.textContent = me.alive
-      ? burnt.length > 0
-        ? `生き残った！ 焼けたのは ${burnt.join('、')}`
-        : '全員生き残った'
+      ? `${where}！ ＋${me.blood}dL${burnt.length > 0 ? ` ・ 焼けたのは ${burnt.join('、')}` : ''}`
       : `焼けた…… 血 ${me.blood}dL を失った`;
   }
 
   boardEl.innerHTML = world.players
     .map((p) => {
-      const color = `#${PLAYER_COLORS[p.id % PLAYER_COLORS.length].toString(16).padStart(6, '0')}`;
-      const inside = world.phase !== 'result' && isInShelter(p, settings.params);
-      return `<span class="chip" style="--c:${color}">${p.name} ${p.survived}<small>${p.blood}dL${inside ? ' ・影' : ''}</small></span>`;
+      const color = `#${colorOf(p.id).toString(16).padStart(6, '0')}`;
+      const safe = world.phase !== 'result' && refugeOf(p, world) !== null;
+      return `<span class="chip" style="--c:${color}">${p.name} ${p.score}<small>${p.blood}dL${safe ? ' ・安全' : ''}</small></span>`;
     })
     .join('');
 }
@@ -237,8 +240,9 @@ const KNOBS: Knob[] = [
   { key: 'bloodSlow', label: '血による遅さ（満タンで）', min: 0, max: 0.8, step: 0.05 },
   { key: 'baseSpeed', label: '素の速さ（m/s）', min: 2, max: 10, step: 0.5 },
   { key: 'minSpeed', label: '最低速度（m/s）', min: 1, max: 8, step: 0.5 },
-  { key: 'shelterSize', label: '避難所の広さ（m）', min: 1.4, max: 5, step: 0.1 },
-  { key: 'runTime', label: '走る時間（秒）', min: 4, max: 20, step: 1 },
+  { key: 'shelterSize', label: '廃墟の広さ（m）', min: 1.4, max: 5, step: 0.1 },
+  { key: 'runTime', label: '夜明けまでの時間（秒）', min: 3, max: 15, step: 0.5 },
+  { key: 'shadeCount', label: '影の落ちる廃墟の数（0＝人数の半分）', min: 0, max: 8, step: 1 },
 ];
 
 function renderPanel(): void {
@@ -256,10 +260,6 @@ function renderPanel(): void {
       `<input type="range" data-k="players" min="2" max="4" step="1" value="${settings.players}">`,
       `${settings.players}人`,
     )}
-    <label><span>避難所の形</span><select data-k="layout">
-      <option value="random"${settings.layout === 'random' ? ' selected' : ''}>毎回くじ引き</option>
-      ${LAYOUTS.map((l) => `<option value="${l}"${settings.layout === l ? ' selected' : ''}>${LAYOUT_NAMES[l]}</option>`).join('')}
-    </select></label>
     ${KNOBS.map((k) =>
       row(
         k.label,
@@ -271,22 +271,21 @@ function renderPanel(): void {
       <button data-act="reset">既定値に戻す</button>
       <button data-act="close">閉じる</button>
     </div>
-    <p class="note">遅延・人数・形を変えると対戦をやり直す。ほかのつまみは次の瞬間から効く。PCでは WASD／矢印キーで移動、スペースで突き飛ばし。</p>
+    <p class="note">遅延・人数・廃墟の広さを変えると対戦をやり直す。影の数は次の戦から、ほかのつまみは次の瞬間から効く。PCでは WASD／矢印キーで移動、スペースで突き飛ばし。</p>
   `;
 }
 
 panel.addEventListener('input', (e) => {
-  const el = e.target as HTMLInputElement | HTMLSelectElement;
+  const el = e.target as HTMLInputElement;
   const k = el.dataset.k;
   if (!k) return;
   if (k === 'latency') settings.latencyMs = Number(el.value);
   else if (k === 'players') settings.players = Number(el.value);
-  else if (k === 'layout') settings.layout = el.value as Layout | 'random';
   else settings.params[k as keyof Params] = Number(el.value);
 
   const out = el.parentElement?.querySelector('output');
   if (out) out.textContent = k === 'latency' ? `${el.value}ms` : k === 'players' ? `${el.value}人` : el.value;
-  if (k === 'latency' || k === 'players' || k === 'layout' || k === 'shelterSize') restart();
+  if (k === 'latency' || k === 'players' || k === 'shelterSize') restart();
   saveSettings(settings);
 });
 

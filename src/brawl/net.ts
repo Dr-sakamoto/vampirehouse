@@ -2,8 +2,8 @@
 // 本番（友だちとの対戦）では LocalServer をネット越しのサーバーに差し替えるだけで済むよう、
 // クライアントが受け取るのは「サーバーが決めた状態のスナップショット」だけにしてある。
 
-import { botInput } from './bots';
-import { IDLE_INPUT, createWorld, step, type Input, type Layout, type Params, type World } from './sim';
+import { BotBrain } from './bots';
+import { IDLE_INPUT, createWorld, step, type Input, type Params, type World } from './sim';
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
@@ -35,14 +35,15 @@ export class LocalServer {
   world: World;
   private queues = new Map<number, Input[]>();
   private botSeq = 0;
+  private brain = new BotBrain();
 
   constructor(
     playerCount: number,
     public params: Params,
-    layout: Layout | null,
     private readonly humanIds: number[] = [0],
+    seed = (Date.now() & 0x7fffffff) >>> 0,
   ) {
-    this.world = createWorld(playerCount, (Date.now() & 0x7fffffff) >>> 0, layout);
+    this.world = createWorld(playerCount, seed, params);
     for (const p of this.world.players) p.bot = !humanIds.includes(p.id);
   }
 
@@ -63,7 +64,7 @@ export class LocalServer {
         // 遅延の揺れで溜まりすぎたら古いものを捨てて追いつく
         if (q && q.length > 6) q.splice(0, q.length - 2);
       } else {
-        inputs.set(p.id, botInput(this.world, p.id, this.params, ++this.botSeq));
+        inputs.set(p.id, this.brain.input(this.world, p.id, this.params, ++this.botSeq));
       }
     }
     step(this.world, inputs, this.params, DT);

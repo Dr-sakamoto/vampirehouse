@@ -1,29 +1,19 @@
-// 夜明けの乱闘 —— 試作3。避難所の押し合いだけを切り出したシミュレーション。
+// 夜明けの乱闘 —— 試作3。村から走り出し、影の落ちた廃墟か自分の城へ逃げ込む場面を切り出したシミュレーション。
 // 見た目は3Dだが、判定はすべて平面上の「円（吸血鬼）と線分（壁）」で行う。
 // DOM にも通信にも依存しない純粋なロジックで、サーバーとクライアント予測の両方がこれを回す。
 
 import { nextRandom } from '../game/rng';
+import { buildWalls, createCastles, createRuins, inZone, type Castle, type Ruin, type Wall } from './map';
+
+export { LAYOUT_NAMES, type Layout, type Wall } from './map';
 
 export const PLAYER_RADIUS = 0.5;
-/** 闘技場の外壁（正方形の半辺） */
-export const ARENA_HALF = 13;
-/** 同心円から放射状に走り出す位置 */
-const START_RADIUS = 9;
 /** 吸血鬼に持たせる血の上限（dL）。人ひとりがおよそ50dL */
 export const BLOOD_MAX = 100;
 
-export type Layout = 'u' | 'l' | 'pillars' | 'broken';
-export const LAYOUTS: Layout[] = ['u', 'l', 'pillars', 'broken'];
-export const LAYOUT_NAMES: Record<Layout, string> = {
-  u: '三方壁',
-  l: '二方壁',
-  pillars: '柱だけ',
-  broken: '崩れた四方壁',
-};
-
 /** 遊びながら動かす調整つまみ。サーバーとクライアントで同じ値を使う */
 export interface Params {
-  /** 走る時間（秒）。0になった瞬間に判定 */
+  /** 影が落ちてから朝までの時間（秒）。0になった瞬間に判定 */
   runTime: number;
   /** 素の移動速度（m/s） */
   baseSpeed: number;
@@ -43,15 +33,17 @@ export interface Params {
   knockFriction: number;
   /** 壁に当たったときの跳ね返り（0=吸い付く、1=完全に跳ね返る） */
   wallBounce: number;
-  /** 避難所（影）の一辺（m） */
+  /** 廃墟（影）の一辺（m） */
   shelterSize: number;
+  /** 影が落ちる廃墟の数。0 なら人数から決める（人数の半分、最低1） */
+  shadeCount: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
-  runTime: 10,
+  runTime: 6.5,
   baseSpeed: 5.5,
-  bloodSlow: 0.4,
-  minSpeed: 3,
+  bloodSlow: 0.5,
+  minSpeed: 2.5,
   bloodMass: 1.5,
   shoveForce: 9,
   shoveCooldown: 0.25,
@@ -59,6 +51,7 @@ export const DEFAULT_PARAMS: Params = {
   knockFriction: 4,
   wallBounce: 0.5,
   shelterSize: 2.4,
+  shadeCount: 0,
 };
 
 export interface Input {
@@ -88,21 +81,14 @@ export interface Player {
   blood: number;
   shoveCd: number;
   alive: boolean;
-  /** 生き残った回数（試作の得点） */
-  survived: number;
+  /** 生き延びて持ち帰った血の合計（試作の得点） */
+  score: number;
+  /** 前の戦でどこに逃げ込んだか（結果表示用） */
+  refuge: 'castle' | 'ruin' | null;
   /** サーバーが最後に処理した入力番号 */
   lastSeq: number;
   /** 最後に受け取った入力。予測で他人を動かすのに使う */
   lastInput: Input;
-}
-
-/** 線分の壁。a===b なら柱（円） */
-export interface Wall {
-  ax: number;
-  ay: number;
-  bx: number;
-  by: number;
-  r: number;
 }
 
 export type Phase = 'ready' | 'run' | 'result';
@@ -119,25 +105,23 @@ export interface World {
   /** 今のフェーズの残り秒 */
   phaseLeft: number;
   round: number;
-  layout: Layout;
-  /** 次のラウンドで使う配置。null なら毎回くじ引き */
-  fixedLayout: Layout | null;
+  ruins: Ruin[];
+  castles: Castle[];
   walls: Wall[];
   players: Player[];
   rng: number;
   shoves: ShoveEvent[];
 }
 
-const READY_TIME = 2;
+/** 影が落ちてから走り出すまでの、行き先を考える間 */
+const READY_TIME = 1.5;
 const RESULT_TIME = 3;
-const WALL_R = 0.15;
-const PILLAR_R = 0.35;
 /** 突き飛ばしが届く向きの幅（正面から左右それぞれ） */
 const SHOVE_CONE_COS = Math.cos((75 * Math.PI) / 180);
 
 export const PLAYER_NAMES = ['あなた', 'ボットA', 'ボットB', 'ボットC'];
 
-export function createWorld(playerCount: number, seed: number, fixedLayout: Layout | null = null): World {
+export function createWorld(playerCount: number, seed: number, params: Params = DEFAULT_PARAMS): World {
   const players: Player[] = [];
   for (let id = 0; id < playerCount; id++) {
     players.push({
@@ -153,7 +137,8 @@ export function createWorld(playerCount: number, seed: number, fixedLayout: Layo
       blood: 0,
       shoveCd: 0,
       alive: true,
-      survived: 0,
+      score: 0,
+      refuge: null,
       lastSeq: 0,
       lastInput: IDLE_INPUT,
     });
@@ -163,14 +148,14 @@ export function createWorld(playerCount: number, seed: number, fixedLayout: Layo
     phase: 'ready',
     phaseLeft: READY_TIME,
     round: 0,
-    layout: 'u',
-    fixedLayout,
+    ruins: createRuins(),
+    castles: createCastles(),
     walls: [],
     players,
     rng: seed >>> 0,
     shoves: [],
   };
-  startRound(world, DEFAULT_PARAMS);
+  startRound(world, params);
   return world;
 }
 
@@ -180,62 +165,53 @@ function random(world: World): number {
   return r.value;
 }
 
-/** 配置を引き、血を配り、全員を避難所を囲む円周に並べる */
+export function shadeCountFor(world: World, params: Params): number {
+  const n = params.shadeCount > 0 ? params.shadeCount : Math.max(1, Math.floor(world.players.length / 2));
+  return Math.min(n, world.ruins.length);
+}
+
+/** 雲の影を落とす廃墟を引き、血を配り、全員を村の広場に並べる */
 export function startRound(world: World, params: Params): void {
   world.round += 1;
   world.phase = 'ready';
   world.phaseLeft = READY_TIME;
-  world.layout = world.fixedLayout ?? LAYOUTS[Math.floor(random(world) * LAYOUTS.length)];
-  world.walls = buildWalls(world.layout, params.shelterSize / 2);
+
+  const half = params.shelterSize / 2;
+  for (const r of world.ruins) {
+    r.half = half;
+    r.shaded = false;
+  }
+  const order = world.ruins.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(random(world) * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  for (const i of order.slice(0, shadeCountFor(world, params))) world.ruins[i].shaded = true;
+  world.walls = buildWalls(world.ruins, world.castles, half);
 
   const n = world.players.length;
   const offset = random(world) * Math.PI * 2;
   for (const p of world.players) {
     const angle = offset + (p.id / n) * Math.PI * 2;
-    p.x = Math.cos(angle) * START_RADIUS;
-    p.y = Math.sin(angle) * START_RADIUS;
+    p.x = Math.cos(angle) * 1.6;
+    p.y = Math.sin(angle) * 1.6;
     p.kx = 0;
     p.ky = 0;
-    p.fx = -Math.cos(angle);
-    p.fy = -Math.sin(angle);
+    p.fx = Math.cos(angle);
+    p.fy = Math.sin(angle);
     p.blood = Math.round(random(world) * 10) * (BLOOD_MAX / 10);
     p.shoveCd = 0;
     p.alive = true;
+    p.refuge = null;
   }
 }
 
-/** 避難所の壁。y が負の側を「北（画面の奥）」とする */
-export function buildWalls(layout: Layout, h: number): Wall[] {
-  const seg = (ax: number, ay: number, bx: number, by: number): Wall => ({ ax, ay, bx, by, r: WALL_R });
-  const pillar = (x: number, y: number): Wall => ({ ax: x, ay: y, bx: x, by: y, r: PILLAR_R });
-  const g = h * 0.35; // 崩れた壁の、残っている部分の長さ
-  const walls: Wall[] = [];
-  switch (layout) {
-    case 'u':
-      walls.push(seg(-h, -h, h, -h), seg(-h, -h, -h, h), seg(h, -h, h, h));
-      break;
-    case 'l':
-      walls.push(seg(-h, -h, h, -h), seg(-h, -h, -h, h));
-      break;
-    case 'pillars':
-      walls.push(pillar(-h, -h), pillar(h, -h), pillar(-h, h), pillar(h, h));
-      break;
-    case 'broken':
-      // 四隅にだけ壁が残り、各辺の真ん中が崩れて開いている
-      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
-        walls.push(seg(sx * h, sy * h, sx * (h - g), sy * h), seg(sx * h, sy * h, sx * h, sy * (h - g)));
-      }
-      break;
-  }
-  // 闘技場の外壁
-  const a = ARENA_HALF;
-  walls.push(seg(-a, -a, a, -a), seg(a, -a, a, a), seg(a, a, -a, a), seg(-a, a, -a, -a));
-  return walls;
-}
-
-export function isInShelter(p: { x: number; y: number }, params: Params): boolean {
-  const h = params.shelterSize / 2;
-  return Math.abs(p.x) <= h && Math.abs(p.y) <= h;
+/** 朝の光から身を守れる場所にいるか。自分の城か、影の落ちた廃墟だけ。体の中心で判定する */
+export function refugeOf(p: Player, world: World): 'castle' | 'ruin' | null {
+  const own = world.castles[p.id];
+  if (own && inZone(p, own)) return 'castle';
+  if (world.ruins.some((r) => r.shaded && inZone(p, r))) return 'ruin';
+  return null;
 }
 
 export function speedOf(p: Player, params: Params): number {
@@ -306,13 +282,20 @@ export function step(world: World, inputs: ReadonlyMap<number, Input>, params: P
   // 押し合いは1回では解けきらないので数回まわす
   for (let i = 0; i < 3; i++) {
     resolvePlayers(world, params);
-    for (const p of world.players) for (const w of world.walls) resolveWall(p, w, params);
+    for (const p of world.players) {
+      for (const w of world.walls) {
+        // 遠い壁は飛ばす（壁は100本ほどあるので、ここが一番重い）
+        if (w.ax === w.bx && w.ay === w.by && Math.abs(p.x - w.ax) + Math.abs(p.y - w.ay) > 3) continue;
+        resolveWall(p, w, params);
+      }
+    }
   }
 
   if (world.phaseLeft <= 0) {
     for (const p of world.players) {
-      p.alive = isInShelter(p, params);
-      if (p.alive) p.survived += 1;
+      p.refuge = refugeOf(p, world);
+      p.alive = p.refuge !== null;
+      if (p.alive) p.score += p.blood;
     }
     world.phase = 'result';
     world.phaseLeft = RESULT_TIME;
@@ -375,22 +358,26 @@ function resolvePlayers(world: World, params: Params): void {
   }
 }
 
-function resolveWall(p: Player, w: Wall, params: Params): void {
+/** 線分（太さ r）上の、点に最も近い点 */
+export function closestOnWall(w: Wall, x: number, y: number): { x: number; y: number } {
   const vx = w.bx - w.ax;
   const vy = w.by - w.ay;
   const len2 = vx * vx + vy * vy;
-  const t = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - w.ax) * vx + (p.y - w.ay) * vy) / len2)) : 0;
-  const cx = w.ax + vx * t;
-  const cy = w.ay + vy * t;
-  const dx = p.x - cx;
-  const dy = p.y - cy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - w.ax) * vx + (y - w.ay) * vy) / len2)) : 0;
+  return { x: w.ax + vx * t, y: w.ay + vy * t };
+}
+
+function resolveWall(p: Player, w: Wall, params: Params): void {
+  const c = closestOnWall(w, p.x, p.y);
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
   const dist = Math.hypot(dx, dy);
   const min = PLAYER_RADIUS + w.r;
   if (dist >= min) return;
   const nx = dist > 1e-6 ? dx / dist : 0;
   const ny = dist > 1e-6 ? dy / dist : -1;
-  p.x = cx + nx * min;
-  p.y = cy + ny * min;
+  p.x = c.x + nx * min;
+  p.y = c.y + ny * min;
   const kn = p.kx * nx + p.ky * ny;
   if (kn < 0) {
     p.kx -= (1 + params.wallBounce) * kn * nx;
