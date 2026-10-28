@@ -21,7 +21,7 @@ npm run dev      # http://localhost:5173
 | --- | --- |
 | `npm run dev` | 開発サーバー |
 | `npm run build` | 型チェック＋本番ビルド（`dist/`） |
-| `npm test` | ルールとボットのテスト（107件） |
+| `npm test` | ルールとボットのテスト（114件） |
 | `npm run balance` | ボット自動対戦によるバランス計測 |
 
 依存はビルドツールのみ。実行時のライブラリは使っていない。
@@ -99,6 +99,10 @@ npm run dev      # http://localhost:5173
 PWA対応。スマホのブラウザで開いて「ホーム画面に追加」すればアプリのように起動でき、
 一度開いたページはオフラインでも遊べる（`public/manifest.webmanifest` と `public/sw.js`）。
 
+3Dアクション版の構想と、その山場だけを切り出した試作「夜明けの乱闘」
+（`npm run dev` で http://localhost:5173/brawl.html ）は
+[`docs/action.md`](docs/action.md) にまとめてある。
+
 ルールの詳細と、企画段階で未決定だった項目をどう確定させたかは
 [`docs/design.md`](docs/design.md) に、数値の根拠と実測データは
 [`docs/balance.md`](docs/balance.md) に、実装の構成は
@@ -110,6 +114,7 @@ PWA対応。スマホのブラウザで開いて「ホーム画面に追加」�
 src/game/    ルール本体。DOM に依存しない純粋なロジック
 src/assets/  提供された盤面写真（board.png。現状どこからも参照していない）
 src/ui/      ルールから決まる座標で同心円と扇形を描き、当たり判定を重ねる SVG 層
+src/brawl/   3Dアクション版の試作（夜明けの乱闘）。brawl.html から開く
 docs/        企画書と確定版ルール
 scripts/     バランス検証用シミュレーション
 ```

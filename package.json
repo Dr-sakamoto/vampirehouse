@@ -14,8 +14,12 @@
     "balance": "vite-node scripts/balance.ts"
   },
   "devDependencies": {
+    "@types/three": "^0.186.0",
     "typescript": "~5.9.3",
     "vite": "^7.1.7",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
   }
 }
