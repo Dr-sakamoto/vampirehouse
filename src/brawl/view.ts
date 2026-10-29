@@ -11,7 +11,7 @@ export type ViewMode = 'top' | 'fps';
 
 export const PLAYER_COLORS = [0xe8e2f4, 0x6fa8ff, 0x7be08a, 0xffb347];
 const BODY_HEIGHT = 1.4;
-/** 一人称の目の高さ。廃墟の壁はこれより低く、家はこれより高い */
+/** 一人称の目の高さ。廃墟の壁も岩もこれより低い */
 const EYE_HEIGHT = 1.3;
 /** 見下ろし視点で、画面の狭いほうの辺に収める半径（m） */
 const VIEW_RADIUS = 9;
@@ -21,7 +21,8 @@ const CAMERA_TILT = THREE.MathUtils.degToRad(62);
 const CLOUD_HEIGHT = 8;
 
 // 空が見えるよう、廃墟の壁は目線より低くしてある（中で押し合う相手も見える）
-const WALL_HEIGHT: Record<Wall['kind'], number> = { outer: 0.5, house: 2.0, ruin: 1.1, castle: 2.4, tree: 3.2 };
+// 岩も目線より低い。障害物で視界が塞がらないようにしてある
+const WALL_HEIGHT: Record<Wall['kind'], number> = { outer: 0.5, rock: 1.0, ruin: 1.1, castle: 2.4, tree: 2.0 };
 
 const SHADE_COLOR = 0x2a8fc4;
 const RUIN_FLOOR = 0x3a3644;
@@ -105,7 +106,6 @@ export class BrawlView {
   private terrain = new THREE.Group();
   private terrainKey = '';
   private ruinFloors: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
-  private groundShades: THREE.Mesh[] = [];
   private skyClouds: THREE.Mesh[] = [];
   private beams: THREE.Mesh[] = [];
   private players: PlayerMesh[] = [];
@@ -218,7 +218,6 @@ export class BrawlView {
 
     world.ruins.forEach((r, i) => {
       this.ruinFloors[i].material.color.setHex(r.shaded ? SHADE_COLOR : RUIN_FLOOR);
-      this.groundShades[i].visible = r.shaded;
       // 空の雲と光の柱は一人称でだけ見せる（見下ろしでは画面を塞いでしまう）
       this.skyClouds[i].visible = r.shaded && fps;
       this.beams[i].visible = r.shaded && fps;
@@ -286,7 +285,6 @@ export class BrawlView {
       (child as THREE.Mesh).geometry?.dispose();
     }
     this.ruinFloors = [];
-    this.groundShades = [];
     this.skyClouds = [];
     this.beams = [];
 
@@ -310,24 +308,19 @@ export class BrawlView {
       fog: false,
     });
     for (const r of world.ruins) {
-      // 雲の影は廃墟より一回り大きく、ぼんやりと地面を暗くする（判定は廃墟の床だけ）
-      const shade = new THREE.Mesh(
-        new THREE.CircleGeometry(r.half * 2.6, 32),
-        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }),
-      );
-      shade.rotation.x = -Math.PI / 2;
-      shade.position.set(r.cx, 0.006, r.cy);
-      this.terrain.add(shade);
-      this.groundShades.push(shade);
+      // 影として見せるのは廃墟の床そのもの。見えている影と、助かる範囲がぴったり一致する
       this.ruinFloors.push(floor(r.cx, r.cy, r.half * 2, RUIN_FLOOR));
 
-      // 真上に浮かぶ雲と、そこから廃墟へ降りる青い光の柱。家の陰からでも見える
+      // 真上に浮かぶ雲と、そこから廃墟へ降りる青い光の柱。遠くからでも見える
       const cloud = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), cloudMat);
       cloud.scale.set(r.half * 3.2, 1.3, r.half * 2.6);
       cloud.position.set(r.cx, CLOUD_HEIGHT, r.cy);
       this.terrain.add(cloud);
       this.skyClouds.push(cloud);
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(r.half * 1.1, r.half * 1.3, CLOUD_HEIGHT, 24, 1, true), beamMat);
+      // 光の柱も床と同じ四角（4面の筒を45度回す）。柱の中にいれば助かる
+      const side = r.half * Math.SQRT2;
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(side, side, CLOUD_HEIGHT, 4, 1, true), beamMat);
+      beam.rotation.y = Math.PI / 4;
       beam.position.set(r.cx, CLOUD_HEIGHT / 2, r.cy);
       this.terrain.add(beam);
       this.beams.push(beam);
@@ -336,7 +329,7 @@ export class BrawlView {
     for (const c of world.castles) {
       const color = new THREE.Color(colorOf(c.owner)).multiplyScalar(0.35);
       floor(c.cx, c.cy, c.half * 2, color.getHex());
-      // 城の旗。持ち主の色で、家並みの向こうからでも自分の城の方角が分かる
+      // 城の旗。持ち主の色で、遠くからでも自分の城の方角が分かる
       const poleX = c.cx + Math.sign(c.cx) * (c.half + 0.3);
       const poleZ = c.cy + Math.sign(c.cy) * (c.half + 0.3);
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 7, 8), new THREE.MeshStandardMaterial({ color: 0x9a94ac }));
@@ -358,30 +351,33 @@ export class BrawlView {
       }
       return m;
     };
-    // 家は入れない塊なので、4枚の壁の上に屋根をかぶせて廃墟と見分けられるようにする
-    const houseWalls = world.walls.filter((w) => w.kind === 'house');
-    for (let i = 0; i + 3 < houseWalls.length; i += 4) {
-      const shape = new THREE.Shape(houseWalls.slice(i, i + 4).map((w) => new THREE.Vector2(w.ax, -w.ay)));
-      const roof = new THREE.Mesh(
-        new THREE.ExtrudeGeometry(shape, { depth: WALL_HEIGHT.house + 0.05, bevelEnabled: false }),
-        mat('roof', 0x6b3a3a),
-      );
-      roof.rotation.x = -Math.PI / 2;
-      this.terrain.add(roof);
-    }
-
     for (const w of world.walls) {
+      if (w.kind === 'rock') {
+        // 低く平たい岩。上から向こうが見える
+        const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(w.r, 0), mat('rock', 0x6e6878));
+        rock.scale.y = WALL_HEIGHT.rock / (w.r * 1.6);
+        rock.position.set(w.ax, WALL_HEIGHT.rock * 0.4, w.ay);
+        rock.rotation.y = w.ax * 1.7 + w.ay;
+        this.terrain.add(rock);
+        continue;
+      }
+      if (w.kind === 'tree') {
+        // 細い幹と、頭より上の葉。目線の高さはほとんど塞がない
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.24, WALL_HEIGHT.tree, 8), mat('trunk', 0x4a3a2c));
+        trunk.position.set(w.ax, WALL_HEIGHT.tree / 2, w.ay);
+        // 葉は小さめに。大きいと見下ろしでは下にいる者を隠し、一人称では空を塞ぐ
+        const leaves = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.8, 8), mat('leaves', 0x2f5d3a));
+        leaves.position.set(w.ax, WALL_HEIGHT.tree + 0.8, w.ay);
+        this.terrain.add(trunk, leaves);
+        continue;
+      }
       const height = WALL_HEIGHT[w.kind];
       const color =
         w.kind === 'castle'
           ? new THREE.Color(colorOf(w.owner ?? 0)).multiplyScalar(0.55).getHex()
-          : w.kind === 'house'
-            ? 0x5a4f63
-            : w.kind === 'tree'
-              ? 0x2f5d3a
-              : w.kind === 'outer'
-                ? 0x3b3748
-                : 0x8a8296;
+          : w.kind === 'outer'
+            ? 0x3b3748
+            : 0x8a8296;
       const material = mat(`${w.kind}:${w.owner ?? ''}`, color);
       const len = Math.hypot(w.bx - w.ax, w.by - w.ay);
       const mesh =
