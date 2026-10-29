@@ -57,7 +57,8 @@ export const DEFAULT_PARAMS: Params = {
   knockControl: 3,
   // 強く弾かれても、壁が勢いを吸って中に留まれるように低めにしてある
   wallBounce: 0.2,
-  shelterSize: 2.4,
+  // 3〜4人が入って押し合える広さ
+  shelterSize: 3.6,
   shadeCount: 0,
 };
 

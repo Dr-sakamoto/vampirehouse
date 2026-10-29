@@ -15,8 +15,8 @@ interface Settings {
 }
 
 // 地形を作り直したので、古い調整値（夜明けまでの時間など）は持ち越さない
-// 突き飛ばしの既定値を変えたので、古い調整値は持ち越さない
-const SETTINGS_KEY = 'vampirehouse-brawl-settings-v3';
+// 既定値（突き飛ばし・廃墟の広さ）を変えたので、古い調整値は持ち越さない
+const SETTINGS_KEY = 'vampirehouse-brawl-settings-v4';
 
 function loadSettings(): Settings {
   const base: Settings = { params: { ...DEFAULT_PARAMS }, latencyMs: 0, players: 4, view: 'fps' };

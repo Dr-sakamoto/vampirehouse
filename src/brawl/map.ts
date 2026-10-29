@@ -71,21 +71,21 @@ const seg = (ax: number, ay: number, bx: number, by: number, kind: WallKind, r =
   kind,
 });
 
-/** 8つの廃墟。形と向きを散らして、どれに影が落ちても入り方が違うようにしてある */
+/**
+ * 4つの廃墟。村の東・南・西・北に1つずつ、城（四隅）とは違う方角に置く。
+ * 城へ向かうか廃墟へ向かうかで、村を出た最初の一歩から道が分かれる。
+ * 形は4種類を1つずつ。壁のある廃墟は、開いた口を村の側へ向けてある
+ */
 const RUIN_SPECS: { layout: Layout; rot: number }[] = [
-  { layout: 'u', rot: 2 },
-  { layout: 'broken', rot: 0 },
-  { layout: 'l', rot: 1 },
-  { layout: 'pillars', rot: 0 },
-  { layout: 'u', rot: 0 },
-  { layout: 'l', rot: 3 },
-  { layout: 'broken', rot: 1 },
-  { layout: 'u', rot: 1 },
+  { layout: 'u', rot: 1 }, // 東。三方壁、口は西（村）向き
+  { layout: 'broken', rot: 0 }, // 南
+  { layout: 'l', rot: 0 }, // 西。北と西が壁、村の側は開いている
+  { layout: 'pillars', rot: 0 }, // 北
 ];
 
 export function createRuins(): Ruin[] {
   return RUIN_SPECS.map((spec, i) => {
-    const angle = ((i + 0.5) / RUIN_SPECS.length) * Math.PI * 2;
+    const angle = (i / RUIN_SPECS.length) * Math.PI * 2;
     return {
       cx: round1(Math.cos(angle) * RUIN_RING),
       cy: round1(Math.sin(angle) * RUIN_RING),
@@ -200,7 +200,7 @@ function trees(ruins: Ruin[], castles: Castle[]): Wall[] {
   let state = 0x5eed;
   const avoid: { x: number; y: number; r: number }[] = [
     { x: 0, y: 0, r: HOUSE_RING + 2.2 },
-    ...ruins.map((r) => ({ x: r.cx, y: r.cy, r: 3.6 })),
+    ...ruins.map((r) => ({ x: r.cx, y: r.cy, r: 4.5 })),
     ...castles.map((c) => ({ x: c.cx, y: c.cy, r: 4.5 })),
   ];
   for (let tries = 0; out.length < 18 && tries < 500; tries++) {
