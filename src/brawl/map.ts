@@ -8,8 +8,8 @@ import { nextRandom } from '../game/rng';
 export const ARENA_HALF = 20;
 /** 村の広場の半径。全員ここから走り出す */
 export const VILLAGE_RADIUS = 3.2;
-/** 村を囲む家並みの半径 */
-const HOUSE_RING = 7;
+/** 村を囲む岩の輪の半径 */
+const ROCK_RING = 6.5;
 /** 廃墟が並ぶ半径 */
 const RUIN_RING = 12.5;
 /** 城の中心（四隅） */
@@ -25,7 +25,8 @@ export const LAYOUT_NAMES: Record<Layout, string> = {
   broken: '崩れた四方壁',
 };
 
-export type WallKind = 'outer' | 'house' | 'ruin' | 'castle' | 'tree';
+// 障害物は岩と木だけ。どちらも目線（1.3m）を塞がないよう、岩は低く、木は幹が細い
+export type WallKind = 'outer' | 'rock' | 'ruin' | 'castle' | 'tree';
 
 /** 線分の壁。a===b なら柱や木（円） */
 export interface Wall {
@@ -52,6 +53,17 @@ export interface Ruin extends Zone {
   rot: number;
   /** 今戦、雲の影が落ちているか */
   shaded: boolean;
+  /** 雲の影の、廃墟の中心からのずれ（m）。雲が流れるにつれて変わる */
+  ox: number;
+  oy: number;
+  /** 雲の流れる向き（単位ベクトル）。白んだ瞬間に決まる */
+  vx: number;
+  vy: number;
+}
+
+/** 雲の影が今落ちている四角。廃墟と同じ大きさで、雲の流れに合わせてずれていく */
+export function shadeZone(r: Ruin): Zone {
+  return { cx: r.cx + r.ox, cy: r.cy + r.oy, half: r.half };
 }
 
 export interface Castle extends Zone {
@@ -71,21 +83,21 @@ const seg = (ax: number, ay: number, bx: number, by: number, kind: WallKind, r =
   kind,
 });
 
-/** 8つの廃墟。形と向きを散らして、どれに影が落ちても入り方が違うようにしてある */
+/**
+ * 4つの廃墟。村の東・南・西・北に1つずつ、城（四隅）とは違う方角に置く。
+ * 城へ向かうか廃墟へ向かうかで、村を出た最初の一歩から道が分かれる。
+ * 形は4種類を1つずつ。壁のある廃墟は、開いた口を村の側へ向けてある
+ */
 const RUIN_SPECS: { layout: Layout; rot: number }[] = [
-  { layout: 'u', rot: 2 },
-  { layout: 'broken', rot: 0 },
-  { layout: 'l', rot: 1 },
-  { layout: 'pillars', rot: 0 },
-  { layout: 'u', rot: 0 },
-  { layout: 'l', rot: 3 },
-  { layout: 'broken', rot: 1 },
-  { layout: 'u', rot: 1 },
+  { layout: 'u', rot: 1 }, // 東。三方壁、口は西（村）向き
+  { layout: 'broken', rot: 0 }, // 南
+  { layout: 'l', rot: 0 }, // 西。北と西が壁、村の側は開いている
+  { layout: 'pillars', rot: 0 }, // 北
 ];
 
 export function createRuins(): Ruin[] {
   return RUIN_SPECS.map((spec, i) => {
-    const angle = ((i + 0.5) / RUIN_SPECS.length) * Math.PI * 2;
+    const angle = (i / RUIN_SPECS.length) * Math.PI * 2;
     return {
       cx: round1(Math.cos(angle) * RUIN_RING),
       cy: round1(Math.sin(angle) * RUIN_RING),
@@ -93,6 +105,10 @@ export function createRuins(): Ruin[] {
       layout: spec.layout,
       rot: spec.rot,
       shaded: false,
+      ox: 0,
+      oy: 0,
+      vx: 1,
+      vy: 0,
     };
   });
 }
@@ -164,18 +180,6 @@ function place(w: Wall, cx: number, cy: number, rot: number): Wall {
   return { ...w, ax: ax + cx, ay: ay + cy, bx: bx + cx, by: by + cy };
 }
 
-/** 長方形の家。村の周りに円を描いて並び、間の路地だけが抜け道になる */
-function house(cx: number, cy: number, angle: number, w: number, d: number): Wall[] {
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  const pt = (u: number, v: number): [number, number] => [cx + u * c - v * s, cy + u * s + v * c];
-  const corners = [pt(-d, -w), pt(d, -w), pt(d, w), pt(-d, w)];
-  return corners.map((p, i) => {
-    const q = corners[(i + 1) % 4];
-    return seg(p[0], p[1], q[0], q[1], 'house', 0.2);
-  });
-}
-
 function castleWalls(castle: Castle): Wall[] {
   const h = castle.half + 0.3;
   const { cx, cy, owner } = castle;
@@ -194,24 +198,48 @@ function castleWalls(castle: Castle): Wall[] {
   return walls.map((w) => ({ ...w, owner }));
 }
 
-/** 木。毎回同じ配置になるよう固定のシードで散らし、建物と道の上には置かない */
-function trees(ruins: Ruin[], castles: Castle[]): Wall[] {
+/** 村を囲む岩の輪。真っすぐは抜けられないが、すき間が広く、上から向こうが見える */
+function rockRing(): Wall[] {
+  const out: Wall[] = [];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const x = round1(Math.cos(angle) * ROCK_RING);
+    const y = round1(Math.sin(angle) * ROCK_RING);
+    out.push(seg(x, y, x, y, 'rock', 0.95));
+  }
+  return out;
+}
+
+/**
+ * 岩と木を野に散らす。毎回同じ配置になるよう固定のシードで決め、
+ * 村の広場・廃墟・城・村を囲む岩の上には置かない
+ */
+function scatter(ruins: Ruin[], castles: Castle[], placed: Wall[]): Wall[] {
   const out: Wall[] = [];
   let state = 0x5eed;
   const avoid: { x: number; y: number; r: number }[] = [
-    { x: 0, y: 0, r: HOUSE_RING + 2.2 },
-    ...ruins.map((r) => ({ x: r.cx, y: r.cy, r: 3.6 })),
+    { x: 0, y: 0, r: VILLAGE_RADIUS + 1.5 },
+    ...ruins.map((r) => ({ x: r.cx, y: r.cy, r: 4.5 })),
     ...castles.map((c) => ({ x: c.cx, y: c.cy, r: 4.5 })),
+    ...placed.map((w) => ({ x: w.ax, y: w.ay, r: w.r + 2 })),
   ];
-  for (let tries = 0; out.length < 18 && tries < 500; tries++) {
-    const a = nextRandom(state);
-    const b = nextRandom(a.state);
-    state = b.state;
-    const x = round1((a.value * 2 - 1) * (ARENA_HALF - 1.5));
-    const y = round1((b.value * 2 - 1) * (ARENA_HALF - 1.5));
-    if (avoid.some((o) => Math.hypot(x - o.x, y - o.y) < o.r)) continue;
-    if (out.some((t) => Math.hypot(x - t.ax, y - t.ay) < 3)) continue;
-    out.push(seg(x, y, x, y, 'tree', TREE_R));
+  const next = (): number => {
+    const r = nextRandom(state);
+    state = r.state;
+    return r.value;
+  };
+  let trees = 0;
+  let rocks = 0;
+  for (let tries = 0; (trees < 20 || rocks < 12) && tries < 2000; tries++) {
+    const x = round1((next() * 2 - 1) * (ARENA_HALF - 1.5));
+    const y = round1((next() * 2 - 1) * (ARENA_HALF - 1.5));
+    const isRock = rocks < 12 && (trees >= 20 || next() < 0.4);
+    const r = isRock ? round1(0.5 + next() * 0.5) : TREE_R;
+    if (avoid.some((o) => Math.hypot(x - o.x, y - o.y) < o.r + r)) continue;
+    if (out.some((t) => Math.hypot(x - t.ax, y - t.ay) < t.r + r + 2.2)) continue;
+    out.push(seg(x, y, x, y, isRock ? 'rock' : 'tree', r));
+    if (isRock) rocks++;
+    else trees++;
   }
   return out;
 }
@@ -222,12 +250,10 @@ export function buildWalls(ruins: Ruin[], castles: Castle[], ruinHalf: number): 
   for (const ruin of ruins) {
     for (const w of ruinShape(ruin.layout, ruinHalf)) walls.push(place(w, ruin.cx, ruin.cy, ruin.rot));
   }
-  for (let i = 0; i < 8; i++) {
-    const angle = (i / 8) * Math.PI * 2;
-    walls.push(...house(Math.cos(angle) * HOUSE_RING, Math.sin(angle) * HOUSE_RING, angle, 1.1, 0.9));
-  }
+  const ring = rockRing();
+  walls.push(...ring);
   for (const c of castles) walls.push(...castleWalls(c));
-  walls.push(...trees(ruins, castles));
+  walls.push(...scatter(ruins, castles, ring));
   const a = ARENA_HALF;
   walls.push(seg(-a, -a, a, -a, 'outer'), seg(a, -a, a, a, 'outer'), seg(a, a, -a, a, 'outer'), seg(-a, a, -a, -a, 'outer'));
   return walls;

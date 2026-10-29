@@ -1,7 +1,7 @@
 // 夜明けの乱闘（試作3）の入口。操作・HUD・調整つまみと、サーバー／クライアントの時計を回す。
 
 import { LagChannel, LocalServer, PredictingClient, DT, type Snapshot } from './net';
-import { DEFAULT_PARAMS, refugeOf, shadeCountFor, type Input, type Params } from './sim';
+import { DEFAULT_PARAMS, refugeOf, shadeCountFor, villagerInReach, type Input, type Params } from './sim';
 import { BrawlView, colorOf, dawnOf, drawMinimap, lookForward, type Look, type ViewMode } from './view';
 import './brawl.css';
 
@@ -15,7 +15,8 @@ interface Settings {
 }
 
 // 地形を作り直したので、古い調整値（夜明けまでの時間など）は持ち越さない
-const SETTINGS_KEY = 'vampirehouse-brawl-settings-v2';
+// 既定値（突き飛ばし・廃墟の広さ）を変えたので、古い調整値は持ち越さない
+const SETTINGS_KEY = 'vampirehouse-brawl-settings-v6';
 
 function loadSettings(): Settings {
   const base: Settings = { params: { ...DEFAULT_PARAMS }, latencyMs: 0, players: 4, view: 'fps' };
@@ -55,6 +56,7 @@ root.innerHTML = `
   </div>
   <div class="stick-zone"><div class="stick-base"><div class="stick-knob"></div></div></div>
   <div class="look-zone"></div>
+  <button class="suck">吸う</button>
   <button class="shove">突き<br>飛ばし</button>
   <div class="panel" hidden></div>
 `;
@@ -216,6 +218,22 @@ for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) {
 }
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
+// 吸うボタンは押している間ずっと吸う（夜の村でだけ出る）
+const suckBtn = root.querySelector<HTMLButtonElement>('.suck')!;
+let suckHeld = false;
+suckBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  suckBtn.setPointerCapture(e.pointerId);
+  suckHeld = true;
+  suckBtn.classList.add('pressed');
+});
+for (const ev of ['pointerup', 'pointercancel']) {
+  suckBtn.addEventListener(ev, () => {
+    suckHeld = false;
+    suckBtn.classList.remove('pressed');
+  });
+}
+
 // ---- サーバーとクライアント ------------------------------------------------
 
 let server!: LocalServer;
@@ -266,7 +284,8 @@ function frame(now: number): void {
       ax = f.x;
       ay = f.y;
     }
-    const input = client.advance(sx, sy, ax, ay, shoveQueued, settings.params);
+    const suck = suckHeld || keys.has('KeyF');
+    const input = client.advance(sx, sy, ax, ay, shoveQueued, suck, settings.params);
     shoveQueued = false;
     up.send(input, now);
 
@@ -301,35 +320,58 @@ function updateFilter(): void {
   filterEl.classList.toggle('urgent', state === 'sun' && world.phaseLeft <= 3);
 }
 
+const crosshairEl = root.querySelector<HTMLElement>('.crosshair')!;
+
+/** 突き飛ばしの待ち時間。ボタンが時計回りに満ちていき、満ちきったら押せる */
+function updateShoveReady(): void {
+  const me = client.world.players[ME];
+  const ready = 1 - Math.min(1, me.shoveCd / Math.max(0.01, settings.params.shoveCooldown));
+  shoveBtn.style.setProperty('--ready', `${(ready * 360).toFixed(0)}deg`);
+  shoveBtn.classList.toggle('cooling', ready < 1);
+  crosshairEl.classList.toggle('cooling', ready < 1);
+}
+
 function updateHud(): void {
+  updateShoveReady();
   updateFilter();
   const world = client.world;
   const me = world.players[ME];
   const shades = shadeCountFor(world, settings.params);
+  const blood = Math.floor(me.blood);
   layoutEl.textContent = `第${world.round}戦 ・ 影${shades}か所${settings.latencyMs > 0 ? ` ・ 遅延${settings.latencyMs}ms` : ''}`;
+  root.classList.toggle('night', world.phase === 'village');
+  suckBtn.classList.toggle('can', villagerInReach(world, me) >= 0);
 
-  if (world.phase === 'ready') {
+  if (world.phase === 'village') {
     countEl.textContent = '';
-    msgEl.textContent = `血 ${me.blood}dL ―― 雲が切れた。青い廃墟か、白枠の自分の城へ`;
+    countEl.classList.remove('urgent');
+    msgEl.textContent =
+      me.sucking >= 0
+        ? `吸っている…… 血 ${blood}dL`
+        : villagerInReach(world, me) >= 0
+          ? `血 ${blood}dL ―― 「吸う」を長押し`
+          : `血 ${blood}dL ―― 村人に近づいて吸え。夜明けはいつ来るか分からない`;
   } else if (world.phase === 'run') {
     const left = Math.ceil(world.phaseLeft);
     countEl.textContent = String(left);
     countEl.classList.toggle('urgent', left <= 3);
-    msgEl.textContent = '';
+    // 白んだ直後だけ、どこへ逃げるかを大きく出す
+    msgEl.textContent =
+      world.phaseLeft > settings.params.runTime - 1.5 ? `空が白んだ！ 血 ${blood}dL ―― 青い廃墟か、白枠の自分の城へ` : '';
   } else {
     countEl.textContent = '';
     const burnt = world.players.filter((p) => !p.alive).map((p) => p.name);
     const where = me.refuge === 'castle' ? '城に帰り着いた' : '影の中で生き延びた';
     msgEl.textContent = me.alive
-      ? `${where}！ ＋${me.blood}dL${burnt.length > 0 ? ` ・ 焼けたのは ${burnt.join('、')}` : ''}`
-      : `焼けた…… 血 ${me.blood}dL を失った`;
+      ? `${where}！ ＋${blood}dL${burnt.length > 0 ? ` ・ 焼けたのは ${burnt.join('、')}` : ''}`
+      : `焼けた…… 血 ${blood}dL を失った`;
   }
 
   boardEl.innerHTML = world.players
     .map((p) => {
       const color = `#${colorOf(p.id).toString(16).padStart(6, '0')}`;
       const safe = world.phase !== 'result' && refugeOf(p, world) !== null;
-      return `<span class="chip" style="--c:${color}">${p.name} ${p.score}<small>${p.blood}dL${safe ? ' ・安全' : ''}</small></span>`;
+      return `<span class="chip" style="--c:${color}">${p.name} ${Math.floor(p.score)}<small>${Math.floor(p.blood)}dL${safe ? ' ・安全' : ''}</small></span>`;
     })
     .join('');
 }
@@ -346,9 +388,10 @@ interface Knob {
 
 const KNOBS: Knob[] = [
   { key: 'shoveForce', label: '突き飛ばしの強さ', min: 2, max: 25, step: 0.5 },
-  { key: 'shoveCooldown', label: '連打の間隔（秒）', min: 0.05, max: 1, step: 0.05 },
+  { key: 'shoveCooldown', label: '突き飛ばしの待ち時間（秒）', min: 0, max: 3, step: 0.1 },
   { key: 'shoveReach', label: '手の届く距離（m）', min: 0.1, max: 2, step: 0.1 },
   { key: 'knockFriction', label: '勢いの止まりやすさ', min: 0.5, max: 12, step: 0.5 },
+  { key: 'knockControl', label: '弾かれ中の踏ん張り（小さいほど流される）', min: 0.5, max: 20, step: 0.5 },
   { key: 'wallBounce', label: '壁の跳ね返り', min: 0, max: 1, step: 0.05 },
   { key: 'bloodMass', label: '血の重さ（満タンで＋）', min: 0, max: 4, step: 0.1 },
   { key: 'bloodSlow', label: '血による遅さ（満タンで）', min: 0, max: 0.8, step: 0.05 },
@@ -356,7 +399,13 @@ const KNOBS: Knob[] = [
   { key: 'minSpeed', label: '最低速度（m/s）', min: 1, max: 8, step: 0.5 },
   { key: 'shelterSize', label: '廃墟の広さ（m）', min: 1.4, max: 5, step: 0.1 },
   { key: 'runTime', label: '夜明けまでの時間（秒）', min: 3, max: 15, step: 0.5 },
-  { key: 'shadeCount', label: '影の落ちる廃墟の数（0＝人数の半分）', min: 0, max: 8, step: 1 },
+  { key: 'shadeCount', label: '影の落ちる廃墟の数（0＝人数の半分）', min: 0, max: 4, step: 1 },
+  { key: 'suckRate', label: '吸う速さ（dL/秒）', min: 2, max: 30, step: 1 },
+  { key: 'villagerBlood', label: '村人ひとりの血（dL）', min: 10, max: 150, step: 10 },
+  { key: 'dawnMin', label: '夜が必ず続く時間（秒）', min: 0, max: 20, step: 1 },
+  { key: 'dawnMean', label: 'その先、夜明けまでの平均（秒）', min: 1, max: 20, step: 1 },
+  { key: 'shadeDrift', label: '雲の影が流れる距離（m）', min: 0, max: 6, step: 0.5 },
+  { key: 'chargeBonus', label: '駆け込みの勢い（全力で走り込んだときの上乗せ）', min: 0, max: 2, step: 0.1 },
 ];
 
 function renderPanel(): void {
@@ -385,7 +434,7 @@ function renderPanel(): void {
       <button data-act="reset">既定値に戻す</button>
       <button data-act="close">閉じる</button>
     </div>
-    <p class="note">遅延・人数・廃墟の広さを変えると対戦をやり直す。影の数は次の戦から、ほかのつまみは次の瞬間から効く。一人称では、右側をドラッグで視点、右側を短くタップでも突き飛ばし。PCでは WASD で移動、←→／Q・E で向きを変える（画面をクリックするとマウスで視点、クリックで突き飛ばし）、スペースで突き飛ばし。</p>
+    <p class="note">遅延・人数・廃墟の広さを変えると対戦をやり直す。影の数は次の戦から、ほかのつまみは次の瞬間から効く。一人称では、右側をドラッグで視点、右側を短くタップでも突き飛ばし。夜の村では「吸う」を長押し（PCは F キー）。PCでは WASD で移動、←→／Q・E で向きを変える（画面をクリックするとマウスで視点、クリックで突き飛ばし）、スペースで突き飛ばし。</p>
   `;
 }
 

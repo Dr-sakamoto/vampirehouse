@@ -21,7 +21,7 @@ npm run dev      # http://localhost:5173
 | --- | --- |
 | `npm run dev` | 開発サーバー |
 | `npm run build` | 型チェック＋本番ビルド（`dist/`） |
-| `npm test` | ルールとボットのテスト（114件） |
+| `npm test` | ルールとボットのテスト（121件） |
 | `npm run balance` | ボット自動対戦によるバランス計測 |
 
 依存はビルドツールのみ。実行時のライブラリは使っていない。

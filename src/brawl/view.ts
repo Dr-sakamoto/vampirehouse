@@ -4,14 +4,14 @@
 // 一人称では盤面を俯瞰できないぶん、空の白み方・雲・光の柱・城の旗で、時間と行き先を読ませる。
 
 import * as THREE from 'three';
-import { ARENA_HALF, VILLAGE_RADIUS, type Wall } from './map';
+import { ARENA_HALF, VILLAGE_RADIUS, shadeZone, type Wall } from './map';
 import { BLOOD_MAX, PLAYER_RADIUS, refugeOf, type Params, type World } from './sim';
 
 export type ViewMode = 'top' | 'fps';
 
 export const PLAYER_COLORS = [0xe8e2f4, 0x6fa8ff, 0x7be08a, 0xffb347];
 const BODY_HEIGHT = 1.4;
-/** 一人称の目の高さ。廃墟の壁はこれより低く、家はこれより高い */
+/** 一人称の目の高さ。廃墟の壁も岩もこれより低い */
 const EYE_HEIGHT = 1.3;
 /** 見下ろし視点で、画面の狭いほうの辺に収める半径（m） */
 const VIEW_RADIUS = 9;
@@ -21,7 +21,8 @@ const CAMERA_TILT = THREE.MathUtils.degToRad(62);
 const CLOUD_HEIGHT = 8;
 
 // 空が見えるよう、廃墟の壁は目線より低くしてある（中で押し合う相手も見える）
-const WALL_HEIGHT: Record<Wall['kind'], number> = { outer: 0.5, house: 2.0, ruin: 1.1, castle: 2.4, tree: 3.2 };
+// 岩も目線より低い。障害物で視界が塞がらないようにしてある
+const WALL_HEIGHT: Record<Wall['kind'], number> = { outer: 0.5, rock: 1.0, ruin: 1.1, castle: 2.4, tree: 2.0 };
 
 const SHADE_COLOR = 0x2a8fc4;
 const RUIN_FLOOR = 0x3a3644;
@@ -84,9 +85,9 @@ export function colorOf(id: number): number {
   return PLAYER_COLORS[id % PLAYER_COLORS.length];
 }
 
-/** 0〜1。夜明けの予告が出てから朝までの進み具合 */
+/** 0〜1。空が白んでから朝までの進み具合。夜の村では0（いつ白むかは空を見ても分からない） */
 export function dawnOf(world: World, params: Params): number {
-  const left = world.phase === 'run' ? world.phaseLeft / params.runTime : world.phase === 'ready' ? 1 : 0;
+  const left = world.phase === 'run' ? world.phaseLeft / params.runTime : world.phase === 'village' ? 1 : 0;
   return 1 - Math.max(0, Math.min(1, left));
 }
 
@@ -105,10 +106,16 @@ export class BrawlView {
   private terrain = new THREE.Group();
   private terrainKey = '';
   private ruinFloors: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
-  private groundShades: THREE.Mesh[] = [];
+  /** 雲の影。廃墟と同じ大きさの四角で、雲の流れに合わせて動く。この四角の中だけが助かる */
+  private shadeFloors: THREE.Mesh[] = [];
+  /** 影の流れる向きを示す矢印 */
+  private shadeArrows: THREE.Mesh[] = [];
   private skyClouds: THREE.Mesh[] = [];
   private beams: THREE.Mesh[] = [];
   private players: PlayerMesh[] = [];
+  private villagers: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>[] = [];
+  /** 吸っている者と村人を結ぶ赤い筋（吸血鬼ごとに1本） */
+  private suckLines: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>[] = [];
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -183,6 +190,7 @@ export class BrawlView {
   render(world: World, params: Params, meId: number, look: Look): void {
     this.syncTerrain(world);
     this.syncPlayers(world);
+    this.syncVillagers(world);
     const me = world.players[meId];
     const fps = this.mode === 'fps';
 
@@ -205,7 +213,7 @@ export class BrawlView {
       const limit = ARENA_HALF - VIEW_RADIUS * 0.6;
       const tx = THREE.MathUtils.clamp(me.x, -limit, limit);
       const tz = THREE.MathUtils.clamp(me.y, -limit, limit);
-      this.camTarget.lerp(new THREE.Vector3(tx, 0, tz), world.phase === 'ready' ? 1 : 0.12);
+      this.camTarget.lerp(new THREE.Vector3(tx, 0, tz), world.phase === 'village' ? 0.3 : 0.12);
       this.camera.position.set(
         this.camTarget.x,
         Math.sin(CAMERA_TILT) * this.camDist,
@@ -217,11 +225,17 @@ export class BrawlView {
     this.updateSky(dawnOf(world, params), fps);
 
     world.ruins.forEach((r, i) => {
-      this.ruinFloors[i].material.color.setHex(r.shaded ? SHADE_COLOR : RUIN_FLOOR);
-      this.groundShades[i].visible = r.shaded;
-      // 空の雲と光の柱は一人称でだけ見せる（見下ろしでは画面を塞いでしまう）
+      const z = shadeZone(r);
+      this.shadeFloors[i].visible = r.shaded;
+      this.shadeFloors[i].position.set(z.cx, 0.02, z.cy);
+      this.shadeArrows[i].visible = r.shaded;
+      this.shadeArrows[i].position.set(z.cx, 0.03, z.cy);
+      this.shadeArrows[i].rotation.set(-Math.PI / 2, 0, Math.atan2(-r.vy, r.vx));
+      // 空の雲と光の柱は一人称でだけ見せる（見下ろしでは画面を塞いでしまう）。影と一緒に流れる
       this.skyClouds[i].visible = r.shaded && fps;
+      this.skyClouds[i].position.set(z.cx, CLOUD_HEIGHT, z.cy);
       this.beams[i].visible = r.shaded && fps;
+      this.beams[i].position.set(z.cx, CLOUD_HEIGHT / 2, z.cy);
     });
 
     for (const p of world.players) {
@@ -236,8 +250,8 @@ export class BrawlView {
       m.body.scale.y = burnt ? 0.2 : 1;
       m.body.position.y = (BODY_HEIGHT * m.body.scale.y) / 2;
 
-      // 抱えた血は頭の上の赤い円盤の大きさで見せる
-      const b = p.blood / BLOOD_MAX;
+      // 抱えた血は頭の上の赤い円盤の大きさで見せる（満タンを超えると体よりはみ出す）
+      const b = Math.min(1.6, p.blood / BLOOD_MAX);
       m.blood.visible = !burnt && b > 0;
       m.blood.scale.set(0.2 + b * 0.8, 1, 0.2 + b * 0.8);
       m.blood.position.y = BODY_HEIGHT * m.body.scale.y + 0.05;
@@ -248,9 +262,54 @@ export class BrawlView {
 
       const shoved = world.shoves.some((s) => s.from === p.id && world.tick - s.tick < 8);
       m.nose.scale.setScalar(shoved ? 1.8 : 1);
+
+      // 吸っている間は、村人との間に赤い筋を張る。誰がどれだけ欲張っているかが見える
+      const line = this.suckLines[p.id];
+      const v = p.sucking >= 0 ? world.villagers[p.sucking] : undefined;
+      line.visible = !!v;
+      if (v) {
+        const from = new THREE.Vector3(p.x, 1.0, p.y);
+        const to = new THREE.Vector3(v.x, 1.1, v.y);
+        line.position.copy(from).lerp(to, 0.5);
+        line.lookAt(to);
+        line.scale.set(1, 1, Math.max(0.01, from.distanceTo(to)));
+      }
     }
 
+    // 村人は吸われるほど青ざめ、吸い尽くされると倒れる
+    world.villagers.forEach((v, i) => {
+      const m = this.villagers[i];
+      m.visible = true;
+      const left = Math.max(0, Math.min(1, v.blood / Math.max(1, params.villagerBlood)));
+      m.material.color.setRGB(0.55 + left * 0.3, 0.55 + left * 0.21, 0.6 + left * 0.04);
+      if (v.blood <= 0) {
+        m.rotation.set(0, 0, Math.PI / 2);
+        m.position.set(v.x, 0.28, v.y);
+      } else {
+        m.rotation.set(0, 0, 0);
+        m.position.set(v.x, 0.8, v.y);
+      }
+    });
+    for (let i = world.villagers.length; i < this.villagers.length; i++) this.villagers[i].visible = false;
+
     this.renderer.render(this.scene, this.camera);
+  }
+
+  private syncVillagers(world: World): void {
+    while (this.villagers.length < world.villagers.length) {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, 1.6, 12), new THREE.MeshStandardMaterial({ color: 0xd9c2a3 }));
+      this.scene.add(m);
+      this.villagers.push(m);
+    }
+    while (this.suckLines.length < world.players.length) {
+      const geo = new THREE.CylinderGeometry(0.05, 0.05, 1, 6);
+      // 筒の向きを z 軸に寝かせておき、lookAt で村人へ向ける
+      geo.rotateX(Math.PI / 2);
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xff2a3a }));
+      m.visible = false;
+      this.scene.add(m);
+      this.suckLines.push(m);
+    }
   }
 
   /** 夜空から、東（+x）の地平線が白んで日が昇るまで。地面の明るさと霧の色も空に合わせる */
@@ -286,7 +345,8 @@ export class BrawlView {
       (child as THREE.Mesh).geometry?.dispose();
     }
     this.ruinFloors = [];
-    this.groundShades = [];
+    this.shadeFloors = [];
+    this.shadeArrows = [];
     this.skyClouds = [];
     this.beams = [];
 
@@ -309,25 +369,35 @@ export class BrawlView {
       side: THREE.DoubleSide,
       fog: false,
     });
+    // 影の流れる向きを示す、地面に寝かせた矢印（+x 向きに作っておき、毎フレーム回す）
+    const arrowShape = new THREE.Shape();
+    arrowShape.moveTo(0.9, 0);
+    arrowShape.lineTo(-0.5, 0.6);
+    arrowShape.lineTo(-0.2, 0);
+    arrowShape.lineTo(-0.5, -0.6);
+    arrowShape.closePath();
+    const arrowMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
     for (const r of world.ruins) {
-      // 雲の影は廃墟より一回り大きく、ぼんやりと地面を暗くする（判定は廃墟の床だけ）
-      const shade = new THREE.Mesh(
-        new THREE.CircleGeometry(r.half * 2.6, 32),
-        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }),
-      );
-      shade.rotation.x = -Math.PI / 2;
-      shade.position.set(r.cx, 0.006, r.cy);
-      this.terrain.add(shade);
-      this.groundShades.push(shade);
       this.ruinFloors.push(floor(r.cx, r.cy, r.half * 2, RUIN_FLOOR));
+      // 雲の影。見えている四角と、助かる範囲がぴったり一致する。廃墟の壁の外へはみ出すこともある
+      const shade = floor(r.cx, r.cy, r.half * 2, SHADE_COLOR, 0.02);
+      shade.material.transparent = true;
+      shade.material.opacity = 0.85;
+      this.shadeFloors.push(shade);
+      const arrow = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape), arrowMat);
+      this.terrain.add(arrow);
+      this.shadeArrows.push(arrow);
 
-      // 真上に浮かぶ雲と、そこから廃墟へ降りる青い光の柱。家の陰からでも見える
+      // 真上に浮かぶ雲と、そこから廃墟へ降りる青い光の柱。遠くからでも見える
       const cloud = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), cloudMat);
       cloud.scale.set(r.half * 3.2, 1.3, r.half * 2.6);
       cloud.position.set(r.cx, CLOUD_HEIGHT, r.cy);
       this.terrain.add(cloud);
       this.skyClouds.push(cloud);
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(r.half * 1.1, r.half * 1.3, CLOUD_HEIGHT, 24, 1, true), beamMat);
+      // 光の柱も床と同じ四角（4面の筒を45度回す）。柱の中にいれば助かる
+      const side = r.half * Math.SQRT2;
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(side, side, CLOUD_HEIGHT, 4, 1, true), beamMat);
+      beam.rotation.y = Math.PI / 4;
       beam.position.set(r.cx, CLOUD_HEIGHT / 2, r.cy);
       this.terrain.add(beam);
       this.beams.push(beam);
@@ -336,7 +406,7 @@ export class BrawlView {
     for (const c of world.castles) {
       const color = new THREE.Color(colorOf(c.owner)).multiplyScalar(0.35);
       floor(c.cx, c.cy, c.half * 2, color.getHex());
-      // 城の旗。持ち主の色で、家並みの向こうからでも自分の城の方角が分かる
+      // 城の旗。持ち主の色で、遠くからでも自分の城の方角が分かる
       const poleX = c.cx + Math.sign(c.cx) * (c.half + 0.3);
       const poleZ = c.cy + Math.sign(c.cy) * (c.half + 0.3);
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 7, 8), new THREE.MeshStandardMaterial({ color: 0x9a94ac }));
@@ -358,30 +428,33 @@ export class BrawlView {
       }
       return m;
     };
-    // 家は入れない塊なので、4枚の壁の上に屋根をかぶせて廃墟と見分けられるようにする
-    const houseWalls = world.walls.filter((w) => w.kind === 'house');
-    for (let i = 0; i + 3 < houseWalls.length; i += 4) {
-      const shape = new THREE.Shape(houseWalls.slice(i, i + 4).map((w) => new THREE.Vector2(w.ax, -w.ay)));
-      const roof = new THREE.Mesh(
-        new THREE.ExtrudeGeometry(shape, { depth: WALL_HEIGHT.house + 0.05, bevelEnabled: false }),
-        mat('roof', 0x6b3a3a),
-      );
-      roof.rotation.x = -Math.PI / 2;
-      this.terrain.add(roof);
-    }
-
     for (const w of world.walls) {
+      if (w.kind === 'rock') {
+        // 低く平たい岩。上から向こうが見える
+        const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(w.r, 0), mat('rock', 0x6e6878));
+        rock.scale.y = WALL_HEIGHT.rock / (w.r * 1.6);
+        rock.position.set(w.ax, WALL_HEIGHT.rock * 0.4, w.ay);
+        rock.rotation.y = w.ax * 1.7 + w.ay;
+        this.terrain.add(rock);
+        continue;
+      }
+      if (w.kind === 'tree') {
+        // 細い幹と、頭より上の葉。目線の高さはほとんど塞がない
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.24, WALL_HEIGHT.tree, 8), mat('trunk', 0x4a3a2c));
+        trunk.position.set(w.ax, WALL_HEIGHT.tree / 2, w.ay);
+        // 葉は小さめに。大きいと見下ろしでは下にいる者を隠し、一人称では空を塞ぐ
+        const leaves = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.8, 8), mat('leaves', 0x2f5d3a));
+        leaves.position.set(w.ax, WALL_HEIGHT.tree + 0.8, w.ay);
+        this.terrain.add(trunk, leaves);
+        continue;
+      }
       const height = WALL_HEIGHT[w.kind];
       const color =
         w.kind === 'castle'
           ? new THREE.Color(colorOf(w.owner ?? 0)).multiplyScalar(0.55).getHex()
-          : w.kind === 'house'
-            ? 0x5a4f63
-            : w.kind === 'tree'
-              ? 0x2f5d3a
-              : w.kind === 'outer'
-                ? 0x3b3748
-                : 0x8a8296;
+          : w.kind === 'outer'
+            ? 0x3b3748
+            : 0x8a8296;
       const material = mat(`${w.kind}:${w.owner ?? ''}`, color);
       const len = Math.hypot(w.bx - w.ax, w.by - w.ay);
       const mesh =
@@ -455,7 +528,8 @@ export function drawMinimap(canvas: HTMLCanvasElement, world: World, meId: numbe
   for (const r of world.ruins) {
     if (!r.shaded) continue;
     ctx.fillStyle = '#35d0f5';
-    ctx.fillRect(X(r.cx - r.half), X(r.cy - r.half), r.half * 2 * s, r.half * 2 * s);
+    const z = shadeZone(r);
+    ctx.fillRect(X(z.cx - z.half), X(z.cy - z.half), z.half * 2 * s, z.half * 2 * s);
   }
   const own = world.castles[meId];
   if (own) {

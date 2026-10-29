@@ -86,6 +86,8 @@ export class Nav {
     const cached = this.fields.get(key);
     if (cached) return cached;
     const field = this.dijkstra(tx, ty);
+    // 流れる影を追うと行き先が増えていくので、溜まりすぎたら古いものから捨てる
+    if (this.fields.size > 200) this.fields.delete(this.fields.keys().next().value!);
     this.fields.set(key, field);
     return field;
   }
