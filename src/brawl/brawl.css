@@ -133,6 +133,13 @@ html, body {
   touch-action: none;
 }
 .shove.pressed { background: rgba(230, 57, 70, 0.75); transform: scale(0.94); }
+/* 待ち時間の間は、使える部分（赤）が時計回りに満ちていく */
+.shove.cooling {
+  border-color: rgba(230, 57, 70, 0.35);
+  color: rgba(236, 232, 242, 0.45);
+  background: conic-gradient(rgba(230, 57, 70, 0.45) var(--ready, 0deg), rgba(20, 19, 26, 0.6) 0);
+}
+.crosshair.cooling { background: rgba(236, 232, 242, 0.2); }
 
 .panel {
   position: absolute;

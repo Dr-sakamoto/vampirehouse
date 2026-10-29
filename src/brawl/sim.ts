@@ -25,12 +25,17 @@ export interface Params {
   bloodMass: number;
   /** 突き飛ばしの強さ（衝撃量） */
   shoveForce: number;
-  /** 連打の最短間隔（秒） */
+  /** 突き飛ばしの待ち時間（秒）。一度押したら、これだけ経つまで次は押せない */
   shoveCooldown: number;
   /** 体の縁からどこまで手が届くか（m） */
   shoveReach: number;
   /** 弾かれた勢いの減り方（大きいほどすぐ止まる） */
   knockFriction: number;
+  /**
+   * 弾かれている間の、自分の足の効きにくさ。勢いがこの速さ（m/s）のとき足の効きが半分になる。
+   * 小さいほど、弾かれた者は踏ん張れずに飛ばされる
+   */
+  knockControl: number;
   /** 壁に当たったときの跳ね返り（0=吸い付く、1=完全に跳ね返る） */
   wallBounce: number;
   /** 廃墟（影）の一辺（m） */
@@ -45,11 +50,13 @@ export const DEFAULT_PARAMS: Params = {
   bloodSlow: 0.5,
   minSpeed: 2.5,
   bloodMass: 1.5,
-  shoveForce: 9,
-  shoveCooldown: 0.25,
+  shoveForce: 16,
+  shoveCooldown: 1,
   shoveReach: 0.7,
-  knockFriction: 4,
-  wallBounce: 0.5,
+  knockFriction: 3,
+  knockControl: 3,
+  // 強く弾かれても、壁が勢いを吸って中に留まれるように低めにしてある
+  wallBounce: 0.2,
   shelterSize: 2.4,
   shadeCount: 0,
 };
@@ -262,7 +269,9 @@ export function step(world: World, inputs: ReadonlyMap<number, Input>, params: P
 
     const len = Math.hypot(input.mx, input.my);
     if (len > 0.05) {
-      const scale = Math.min(1, len) / len;
+      // 弾かれている最中は足が効かない。すぐ歩いて押し戻せると、突き飛ばしが効いて見えない
+      const control = 1 / (1 + Math.hypot(p.kx, p.ky) / params.knockControl);
+      const scale = (Math.min(1, len) / len) * control;
       const speed = speedOf(p, params);
       p.x += input.mx * scale * speed * dt;
       p.y += input.my * scale * speed * dt;

@@ -15,7 +15,8 @@ interface Settings {
 }
 
 // 地形を作り直したので、古い調整値（夜明けまでの時間など）は持ち越さない
-const SETTINGS_KEY = 'vampirehouse-brawl-settings-v2';
+// 突き飛ばしの既定値を変えたので、古い調整値は持ち越さない
+const SETTINGS_KEY = 'vampirehouse-brawl-settings-v3';
 
 function loadSettings(): Settings {
   const base: Settings = { params: { ...DEFAULT_PARAMS }, latencyMs: 0, players: 4, view: 'fps' };
@@ -301,7 +302,19 @@ function updateFilter(): void {
   filterEl.classList.toggle('urgent', state === 'sun' && world.phaseLeft <= 3);
 }
 
+const crosshairEl = root.querySelector<HTMLElement>('.crosshair')!;
+
+/** 突き飛ばしの待ち時間。ボタンが時計回りに満ちていき、満ちきったら押せる */
+function updateShoveReady(): void {
+  const me = client.world.players[ME];
+  const ready = 1 - Math.min(1, me.shoveCd / Math.max(0.01, settings.params.shoveCooldown));
+  shoveBtn.style.setProperty('--ready', `${(ready * 360).toFixed(0)}deg`);
+  shoveBtn.classList.toggle('cooling', ready < 1);
+  crosshairEl.classList.toggle('cooling', ready < 1);
+}
+
 function updateHud(): void {
+  updateShoveReady();
   updateFilter();
   const world = client.world;
   const me = world.players[ME];
@@ -346,9 +359,10 @@ interface Knob {
 
 const KNOBS: Knob[] = [
   { key: 'shoveForce', label: '突き飛ばしの強さ', min: 2, max: 25, step: 0.5 },
-  { key: 'shoveCooldown', label: '連打の間隔（秒）', min: 0.05, max: 1, step: 0.05 },
+  { key: 'shoveCooldown', label: '突き飛ばしの待ち時間（秒）', min: 0, max: 3, step: 0.1 },
   { key: 'shoveReach', label: '手の届く距離（m）', min: 0.1, max: 2, step: 0.1 },
   { key: 'knockFriction', label: '勢いの止まりやすさ', min: 0.5, max: 12, step: 0.5 },
+  { key: 'knockControl', label: '弾かれ中の踏ん張り（小さいほど流される）', min: 0.5, max: 20, step: 0.5 },
   { key: 'wallBounce', label: '壁の跳ね返り', min: 0, max: 1, step: 0.05 },
   { key: 'bloodMass', label: '血の重さ（満タンで＋）', min: 0, max: 4, step: 0.1 },
   { key: 'bloodSlow', label: '血による遅さ（満タンで）', min: 0, max: 0.8, step: 0.05 },

@@ -37,7 +37,6 @@ describe('夜明けの乱闘', () => {
     step(w, new Map([[0, input(1, 0, 0, true)]]), P, DT);
     for (let i = 0; i < 30; i++) step(w, new Map(), P, DT);
     expect(w.players[1].x).toBeGreaterThan(7);
-    expect(w.players[0].shoveCd).toBe(0);
   });
 
   it('背後の相手には届かない', () => {
@@ -81,14 +80,35 @@ describe('夜明けの乱闘', () => {
     expect(w.shoves[0].hit).toEqual([1]);
   });
 
-  it('連打は最短間隔より速くは効かない', () => {
+  it('弾かれている間は、自分の足ではほとんど踏ん張れない', () => {
     const w = running();
     place(w, 0, 5, 5);
     place(w, 1, 6.1, 5);
     w.players[0].fx = 1;
     w.players[0].fy = 0;
-    for (let i = 1; i <= 6; i++) step(w, new Map([[0, input(i, 0, 0, true)]]), P, DT);
-    expect(w.shoves.filter((s) => s.from === 0)).toHaveLength(1);
+    step(w, new Map([[0, input(1, 0, 0, true)]]), P, DT);
+    // 弾かれた側が全力で押し返そうとしても、押された方向へ流される
+    for (let i = 2; i < 20; i++) step(w, new Map([[1, input(i, -1, 0)]]), P, DT);
+    expect(w.players[1].x).toBeGreaterThan(7);
+  });
+
+  it('待ち時間が明けるまで、次の突き飛ばしは出ない', () => {
+    const w = running();
+    place(w, 0, 5, 5);
+    place(w, 1, 6.1, 5);
+    w.players[0].fx = 1;
+    w.players[0].fy = 0;
+    // 記録は少し経つと消えるので、出た瞬間を数える
+    let count = 0;
+    const press = (seq: number): void => {
+      step(w, new Map([[0, input(seq, 0, 0, true)]]), P, DT);
+      if (w.shoves.some((s) => s.from === 0 && s.tick === w.tick)) count++;
+    };
+    const ticks = Math.round(P.shoveCooldown / DT);
+    for (let i = 1; i <= ticks; i++) press(i);
+    expect(count).toBe(1);
+    press(ticks + 1);
+    expect(count).toBe(2);
   });
 
   it('壁に当たれば廃墟の中に残る', () => {
@@ -97,8 +117,9 @@ describe('夜明けの乱闘', () => {
     const ruin = { cx: 0, cy: 0, half: P.shelterSize / 2, layout: 'u' as const, rot: 0, shaded: true };
     w.ruins = [ruin];
     w.walls = buildWalls([ruin], [], ruin.half).filter((x) => x.kind === 'ruin');
+    // 素の重さの者が、既定の強さで突き飛ばされたときの勢い
     place(w, 1, 0, -0.3);
-    w.players[1].ky = -30;
+    w.players[1].ky = -P.shoveForce;
     for (let i = 0; i < 60; i++) step(w, new Map(), P, DT);
     expect(inZone(w.players[1], ruin)).toBe(true);
   });
