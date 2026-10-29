@@ -85,9 +85,9 @@ export function colorOf(id: number): number {
   return PLAYER_COLORS[id % PLAYER_COLORS.length];
 }
 
-/** 0〜1。夜明けの予告が出てから朝までの進み具合 */
+/** 0〜1。空が白んでから朝までの進み具合。夜の村では0（いつ白むかは空を見ても分からない） */
 export function dawnOf(world: World, params: Params): number {
-  const left = world.phase === 'run' ? world.phaseLeft / params.runTime : world.phase === 'ready' ? 1 : 0;
+  const left = world.phase === 'run' ? world.phaseLeft / params.runTime : world.phase === 'village' ? 1 : 0;
   return 1 - Math.max(0, Math.min(1, left));
 }
 
@@ -109,6 +109,9 @@ export class BrawlView {
   private skyClouds: THREE.Mesh[] = [];
   private beams: THREE.Mesh[] = [];
   private players: PlayerMesh[] = [];
+  private villagers: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>[] = [];
+  /** 吸っている者と村人を結ぶ赤い筋（吸血鬼ごとに1本） */
+  private suckLines: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>[] = [];
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -183,6 +186,7 @@ export class BrawlView {
   render(world: World, params: Params, meId: number, look: Look): void {
     this.syncTerrain(world);
     this.syncPlayers(world);
+    this.syncVillagers(world);
     const me = world.players[meId];
     const fps = this.mode === 'fps';
 
@@ -205,7 +209,7 @@ export class BrawlView {
       const limit = ARENA_HALF - VIEW_RADIUS * 0.6;
       const tx = THREE.MathUtils.clamp(me.x, -limit, limit);
       const tz = THREE.MathUtils.clamp(me.y, -limit, limit);
-      this.camTarget.lerp(new THREE.Vector3(tx, 0, tz), world.phase === 'ready' ? 1 : 0.12);
+      this.camTarget.lerp(new THREE.Vector3(tx, 0, tz), world.phase === 'village' ? 0.3 : 0.12);
       this.camera.position.set(
         this.camTarget.x,
         Math.sin(CAMERA_TILT) * this.camDist,
@@ -235,8 +239,8 @@ export class BrawlView {
       m.body.scale.y = burnt ? 0.2 : 1;
       m.body.position.y = (BODY_HEIGHT * m.body.scale.y) / 2;
 
-      // 抱えた血は頭の上の赤い円盤の大きさで見せる
-      const b = p.blood / BLOOD_MAX;
+      // 抱えた血は頭の上の赤い円盤の大きさで見せる（満タンを超えると体よりはみ出す）
+      const b = Math.min(1.6, p.blood / BLOOD_MAX);
       m.blood.visible = !burnt && b > 0;
       m.blood.scale.set(0.2 + b * 0.8, 1, 0.2 + b * 0.8);
       m.blood.position.y = BODY_HEIGHT * m.body.scale.y + 0.05;
@@ -247,9 +251,54 @@ export class BrawlView {
 
       const shoved = world.shoves.some((s) => s.from === p.id && world.tick - s.tick < 8);
       m.nose.scale.setScalar(shoved ? 1.8 : 1);
+
+      // 吸っている間は、村人との間に赤い筋を張る。誰がどれだけ欲張っているかが見える
+      const line = this.suckLines[p.id];
+      const v = p.sucking >= 0 ? world.villagers[p.sucking] : undefined;
+      line.visible = !!v;
+      if (v) {
+        const from = new THREE.Vector3(p.x, 1.0, p.y);
+        const to = new THREE.Vector3(v.x, 1.1, v.y);
+        line.position.copy(from).lerp(to, 0.5);
+        line.lookAt(to);
+        line.scale.set(1, 1, Math.max(0.01, from.distanceTo(to)));
+      }
     }
 
+    // 村人は吸われるほど青ざめ、吸い尽くされると倒れる
+    world.villagers.forEach((v, i) => {
+      const m = this.villagers[i];
+      m.visible = true;
+      const left = Math.max(0, Math.min(1, v.blood / Math.max(1, params.villagerBlood)));
+      m.material.color.setRGB(0.55 + left * 0.3, 0.55 + left * 0.21, 0.6 + left * 0.04);
+      if (v.blood <= 0) {
+        m.rotation.set(0, 0, Math.PI / 2);
+        m.position.set(v.x, 0.28, v.y);
+      } else {
+        m.rotation.set(0, 0, 0);
+        m.position.set(v.x, 0.8, v.y);
+      }
+    });
+    for (let i = world.villagers.length; i < this.villagers.length; i++) this.villagers[i].visible = false;
+
     this.renderer.render(this.scene, this.camera);
+  }
+
+  private syncVillagers(world: World): void {
+    while (this.villagers.length < world.villagers.length) {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, 1.6, 12), new THREE.MeshStandardMaterial({ color: 0xd9c2a3 }));
+      this.scene.add(m);
+      this.villagers.push(m);
+    }
+    while (this.suckLines.length < world.players.length) {
+      const geo = new THREE.CylinderGeometry(0.05, 0.05, 1, 6);
+      // 筒の向きを z 軸に寝かせておき、lookAt で村人へ向ける
+      geo.rotateX(Math.PI / 2);
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xff2a3a }));
+      m.visible = false;
+      this.scene.add(m);
+      this.suckLines.push(m);
+    }
   }
 
   /** 夜空から、東（+x）の地平線が白んで日が昇るまで。地面の明るさと霧の色も空に合わせる */

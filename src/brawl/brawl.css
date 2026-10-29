@@ -133,6 +133,27 @@ html, body {
   touch-action: none;
 }
 .shove.pressed { background: rgba(230, 57, 70, 0.75); transform: scale(0.94); }
+
+/* 吸うボタン。夜の村でだけ、突き飛ばしの上に出る。手の届く村人がいるときだけ明るい */
+.suck {
+  display: none;
+  position: absolute;
+  /* 突き飛ばしの左隣。右の親指が届く弧の上に2つ並ぶ */
+  right: calc(max(24px, env(safe-area-inset-right)) + 124px);
+  bottom: max(36px, env(safe-area-inset-bottom));
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 42, 58, 0.45);
+  background: rgba(60, 10, 16, 0.55);
+  color: rgba(236, 232, 242, 0.5);
+  font-size: 17px;
+  font-weight: 700;
+  touch-action: none;
+}
+.night .suck { display: block; }
+.suck.can { border-color: rgba(255, 42, 58, 0.95); background: rgba(160, 20, 34, 0.6); color: var(--text); }
+.suck.pressed { background: rgba(255, 42, 58, 0.85); transform: scale(0.94); }
 /* 待ち時間の間は、使える部分（赤）が時計回りに満ちていく */
 .shove.cooling {
   border-color: rgba(230, 57, 70, 0.35);

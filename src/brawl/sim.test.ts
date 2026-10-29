@@ -23,8 +23,8 @@ function place(w: World, id: number, x: number, y: number, blood = 0): void {
   p.blood = blood;
 }
 
-function input(seq: number, mx = 0, my = 0, shove = false, ax = 0, ay = 0): Input {
-  return { seq, mx, my, ax, ay, shove };
+function input(seq: number, mx = 0, my = 0, shove = false, ax = 0, ay = 0, suck = false): Input {
+  return { seq, mx, my, ax, ay, shove, suck };
 }
 
 describe('夜明けの乱闘', () => {
@@ -156,19 +156,74 @@ describe('夜明けの乱闘', () => {
     expect(refugeOf(w.players[1], w)).toBe('castle');
   });
 
-  it('影が落ちる廃墟は人数より少なく、毎戦引き直される', () => {
+  it('影の落ちる廃墟は夜明けの瞬間に決まり、人数より少なく、毎戦引き直される', () => {
     const w = createWorld(4, 7);
     const shaded = (): number[] => w.ruins.flatMap((r, i) => (r.shaded ? [i] : []));
-    expect(shaded()).toHaveLength(2);
     const seen = new Set<string>();
     for (let round = 0; round < 10; round++) {
+      // 夜のうちはどこにも影が落ちていない
+      expect(w.phase).toBe('village');
+      expect(shaded()).toHaveLength(0);
+      w.phaseLeft = DT / 2;
+      step(w, new Map(), P, DT);
+      expect(w.phase).toBe('run');
+      expect(shaded()).toHaveLength(2);
       seen.add(shaded().join(','));
       w.phase = 'result';
       w.phaseLeft = 0;
       step(w, new Map(), P, DT);
-      expect(shaded()).toHaveLength(2);
     }
     expect(seen.size).toBeGreaterThan(3);
+  });
+
+  it('夜明けは最低限の夜のあと、戦ごとにばらばらの時刻に来る', () => {
+    const lengths = new Set<number>();
+    for (let seed = 1; seed <= 30; seed++) {
+      const w = createWorld(2, seed);
+      expect(w.phaseLeft).toBeGreaterThanOrEqual(P.dawnMin);
+      lengths.add(Math.round(w.phaseLeft));
+    }
+    expect(lengths.size).toBeGreaterThan(5);
+  });
+
+  it('村人の近くで吸い続けると血が増え、村人の血が減る。吸っている間は動けない', () => {
+    const w = createWorld(2, 3);
+    w.walls = [];
+    w.phaseLeft = 100;
+    const v = w.villagers[0];
+    place(w, 0, v.x + 0.8, v.y);
+    for (let i = 1; i <= 60; i++) step(w, new Map([[0, input(i, 1, 0, false, 0, 0, true)]]), P, DT);
+    expect(w.players[0].blood).toBeCloseTo(P.suckRate, 0);
+    expect(v.blood).toBeCloseTo(P.villagerBlood - P.suckRate, 0);
+    expect(w.players[0].x).toBeCloseTo(v.x + 0.8);
+    expect(w.players[0].sucking).toBe(0);
+  });
+
+  it('手の届かない村人、吸い尽くされた村人からは吸えない', () => {
+    const w = createWorld(2, 3);
+    w.walls = [];
+    w.phaseLeft = 100;
+    place(w, 0, 15, 15);
+    for (let i = 1; i <= 30; i++) step(w, new Map([[0, input(i, 0, 0, false, 0, 0, true)]]), P, DT);
+    expect(w.players[0].blood).toBe(0);
+
+    for (const v of w.villagers) v.blood = 0;
+    place(w, 0, w.villagers[0].x, w.villagers[0].y);
+    for (let i = 31; i <= 60; i++) step(w, new Map([[0, input(i, 0, 0, false, 0, 0, true)]]), P, DT);
+    expect(w.players[0].blood).toBe(0);
+  });
+
+  it('白んだら、もう吸えない', () => {
+    const w = createWorld(2, 3);
+    w.walls = [];
+    const v = w.villagers[0];
+    place(w, 0, v.x, v.y);
+    w.phaseLeft = DT / 2;
+    step(w, new Map([[0, input(1, 0, 0, false, 0, 0, true)]]), P, DT);
+    expect(w.phase).toBe('run');
+    const before = w.players[0].blood;
+    for (let i = 2; i <= 30; i++) step(w, new Map([[0, input(i, 0, 0, false, 0, 0, true)]]), P, DT);
+    expect(w.players[0].blood).toBe(before);
   });
 
   it('地形は毎回同じで、城の門は村の側に開いている', () => {
