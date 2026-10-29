@@ -4,7 +4,7 @@
 // DOM にも通信にも依存しない純粋なロジックで、サーバーとクライアント予測の両方がこれを回す。
 
 import { nextRandom } from '../game/rng';
-import { buildWalls, createCastles, createRuins, inZone, type Castle, type Ruin, type Wall } from './map';
+import { buildWalls, createCastles, createRuins, inZone, shadeZone, type Castle, type Ruin, type Wall } from './map';
 
 export { LAYOUT_NAMES, type Layout, type Wall } from './map';
 
@@ -55,6 +55,13 @@ export interface Params {
   dawnMin: number;
   /** その先、夜明けまでの平均の待ち時間（秒）。毎瞬同じ確率で白む（指数分布） */
   dawnMean: number;
+  /**
+   * 白んでから朝までに、雲の影が流れる距離（m）。逆向きに半分ずれた所から始まり、半分ずれた所で終わる。
+   * 先に入って奥の壁を背にした者も、途中で日なたに出されて動かざるを得なくなる
+   */
+  shadeDrift: number;
+  /** 駆け込みの勢い。相手へ向かって全力で走りながら押すと、突き飛ばしがこの割合だけ強くなる */
+  chargeBonus: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -77,6 +84,8 @@ export const DEFAULT_PARAMS: Params = {
   villagerBlood: 60,
   dawnMin: 5,
   dawnMean: 5,
+  shadeDrift: 2,
+  chargeBonus: 0.8,
 };
 
 export interface Input {
@@ -108,6 +117,9 @@ export interface Player {
   /** 突き飛ばされた勢い。自分の足による速度とは別に持ち、時間で減衰する */
   kx: number;
   ky: number;
+  /** この瞬間に自分の足で動いている速度（m/s）。駆け込みの勢いに使う */
+  mvx: number;
+  mvy: number;
   /** 向いている方向（単位ベクトル）。突き飛ばしはこちらへ出る */
   fx: number;
   fy: number;
@@ -176,6 +188,8 @@ export function createWorld(playerCount: number, seed: number, params: Params = 
       y: 0,
       kx: 0,
       ky: 0,
+      mvx: 0,
+      mvy: 0,
       fx: 0,
       fy: -1,
       blood: 0,
@@ -230,6 +244,8 @@ export function startRound(world: World, params: Params): void {
   for (const r of world.ruins) {
     r.half = half;
     r.shaded = false;
+    r.ox = 0;
+    r.oy = 0;
   }
   world.walls = buildWalls(world.ruins, world.castles, half);
 
@@ -269,10 +285,28 @@ function dawn(world: World, params: Params): void {
     const j = Math.floor(random(world) * (i + 1));
     [order[i], order[j]] = [order[j], order[i]];
   }
-  for (const i of order.slice(0, shadeCountFor(world, params))) world.ruins[i].shaded = true;
+  for (const i of order.slice(0, shadeCountFor(world, params))) {
+    const r = world.ruins[i];
+    r.shaded = true;
+    const angle = random(world) * Math.PI * 2;
+    r.vx = Math.cos(angle);
+    r.vy = Math.sin(angle);
+  }
   for (const p of world.players) p.sucking = -1;
   world.phase = 'run';
   world.phaseLeft = params.runTime;
+  driftShade(world, params);
+}
+
+/** 雲の影を、白んでからの経過に合わせて流す */
+function driftShade(world: World, params: Params): void {
+  const progress = Math.max(0, Math.min(1, 1 - world.phaseLeft / Math.max(0.01, params.runTime)));
+  const along = (progress - 0.5) * params.shadeDrift;
+  for (const r of world.ruins) {
+    if (!r.shaded) continue;
+    r.ox = r.vx * along;
+    r.oy = r.vy * along;
+  }
 }
 
 /** 手の届く村人のうち、血の残っている一番近い者。いなければ -1 */
@@ -294,7 +328,7 @@ export function villagerInReach(world: World, p: { x: number; y: number }): numb
 export function refugeOf(p: Player, world: World): 'castle' | 'ruin' | null {
   const own = world.castles[p.id];
   if (own && inZone(p, own)) return 'castle';
-  if (world.ruins.some((r) => r.shaded && inZone(p, r))) return 'ruin';
+  if (world.ruins.some((r) => r.shaded && inZone(p, shadeZone(r)))) return 'ruin';
   return null;
 }
 
@@ -325,10 +359,13 @@ export function step(world: World, inputs: ReadonlyMap<number, Input>, params: P
     if (world.phaseLeft <= 0) startRound(world, params);
     return;
   }
+  if (world.phase === 'run') driftShade(world, params);
 
   for (const p of world.players) {
     const input = inputs.get(p.id) ?? IDLE_INPUT;
     p.shoveCd = Math.max(0, p.shoveCd - dt);
+    p.mvx = 0;
+    p.mvy = 0;
 
     // 吸っている間は動けない。手の届く村人がいなければ吸えない
     p.sucking = world.phase === 'village' && input.suck && p.blood < CARRY_MAX ? villagerInReach(world, p) : -1;
@@ -351,8 +388,10 @@ export function step(world: World, inputs: ReadonlyMap<number, Input>, params: P
       const control = 1 / (1 + Math.hypot(p.kx, p.ky) / params.knockControl);
       const scale = (Math.min(1, len) / len) * control;
       const speed = speedOf(p, params);
-      p.x += input.mx * scale * speed * dt;
-      p.y += input.my * scale * speed * dt;
+      p.mvx = input.mx * scale * speed;
+      p.mvy = input.my * scale * speed;
+      p.x += p.mvx * dt;
+      p.y += p.mvy * dt;
       p.fx = input.mx / len;
       p.fy = input.my / len;
     }
@@ -417,7 +456,10 @@ function shove(world: World, p: Player, params: Params): void {
     const nx = dist > 1e-6 ? dx / dist : p.fx;
     const ny = dist > 1e-6 ? dy / dist : p.fy;
     if (nx * p.fx + ny * p.fy < SHOVE_CONE_COS) continue;
-    const impulse = params.shoveForce / massOf(q, params);
+    // 相手へ向かって走り込んでいるほど強い。止まって待ち構えている者には上乗せが無い
+    const closing = Math.max(0, p.mvx * nx + p.mvy * ny) / params.baseSpeed;
+    const charge = 1 + params.chargeBonus * Math.min(1, closing);
+    const impulse = (params.shoveForce * charge) / massOf(q, params);
     q.kx += nx * impulse;
     q.ky += ny * impulse;
     hit.push(q.id);

@@ -53,6 +53,17 @@ export interface Ruin extends Zone {
   rot: number;
   /** 今戦、雲の影が落ちているか */
   shaded: boolean;
+  /** 雲の影の、廃墟の中心からのずれ（m）。雲が流れるにつれて変わる */
+  ox: number;
+  oy: number;
+  /** 雲の流れる向き（単位ベクトル）。白んだ瞬間に決まる */
+  vx: number;
+  vy: number;
+}
+
+/** 雲の影が今落ちている四角。廃墟と同じ大きさで、雲の流れに合わせてずれていく */
+export function shadeZone(r: Ruin): Zone {
+  return { cx: r.cx + r.ox, cy: r.cy + r.oy, half: r.half };
 }
 
 export interface Castle extends Zone {
@@ -94,6 +105,10 @@ export function createRuins(): Ruin[] {
       layout: spec.layout,
       rot: spec.rot,
       shaded: false,
+      ox: 0,
+      oy: 0,
+      vx: 1,
+      vy: 0,
     };
   });
 }

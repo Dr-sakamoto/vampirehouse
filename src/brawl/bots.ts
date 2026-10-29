@@ -6,6 +6,7 @@
 //   2. 間に合わなければ、影の落ちた廃墟のうち一番早く着くところへ（近いが乱闘になる）
 //   3. 着いたら、近くの相手を影の外へ押し出しにかかる
 
+import { shadeZone } from './map';
 import { Nav } from './nav';
 import {
   PLAYER_RADIUS,
@@ -43,6 +44,8 @@ interface Goal {
   fx: number;
   fy: number;
   kind: 'castle' | 'ruin';
+  /** 廃墟へ向かうときの廃墟の番号。雲の影は流れるので、向かう点は毎回影から取り直す */
+  ruin?: number;
 }
 
 /** 戦ごとの道案内と、各ボットの行き先を覚えておく */
@@ -77,7 +80,16 @@ export class BotBrain {
       this.goals.set(id, this.choose(world, me, params, nav));
       this.decidedAt.set(id, world.tick);
     }
-    const goal = this.goals.get(id)!;
+    const goal = { ...this.goals.get(id)! };
+    if (goal.ruin !== undefined) {
+      // 流れていく影を追う。距離場は 0.5m 刻みに丸めた点で引き、作り直しを抑える
+      const z = shadeZone(world.ruins[goal.ruin]);
+      const r = world.ruins[goal.ruin];
+      goal.fx += z.cx - r.cx;
+      goal.fy += z.cy - r.cy;
+      goal.x = Math.round(z.cx * 2) / 2;
+      goal.y = Math.round(z.cy * 2) / 2;
+    }
 
     const near = Math.hypot(goal.x - me.x, goal.y - me.y) < 1.5;
     const way = near ? { x: goal.fx, y: goal.fy } : nav.nextPoint(goal.x, goal.y, me.x, me.y);
@@ -185,7 +197,7 @@ export class BotBrain {
         bestT = t;
         const fx = r.cx + (jitter(world.round, me.id) - 0.5) * r.half;
         const fy = r.cy + (jitter(world.round, me.id + 17) - 0.5) * r.half;
-        goal = { x: r.cx, y: r.cy, fx, fy, kind: 'ruin' };
+        goal = { x: r.cx, y: r.cy, fx, fy, kind: 'ruin', ruin: world.ruins.indexOf(r) };
       }
     }
     return goal ?? toCastle ?? { x: me.x, y: me.y, fx: me.x, fy: me.y, kind: 'ruin' };

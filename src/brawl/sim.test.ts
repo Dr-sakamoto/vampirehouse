@@ -92,6 +92,19 @@ describe('夜明けの乱闘', () => {
     expect(w.players[1].x).toBeGreaterThan(7);
   });
 
+  it('相手へ駆け込みながら押すと、止まって押すより強く弾く', () => {
+    const knock = (runIn: boolean): number => {
+      const w = running();
+      place(w, 0, 5, 5);
+      place(w, 1, 6.1, 5);
+      w.players[0].fx = 1;
+      w.players[0].fy = 0;
+      step(w, new Map([[0, input(1, runIn ? 1 : 0, 0, true)]]), P, DT);
+      return Math.hypot(w.players[1].kx, w.players[1].ky);
+    };
+    expect(knock(true)).toBeGreaterThan(knock(false) * (1 + P.chargeBonus * 0.9));
+  });
+
   it('待ち時間が明けるまで、次の突き飛ばしは出ない', () => {
     const w = running();
     place(w, 0, 5, 5);
@@ -114,7 +127,7 @@ describe('夜明けの乱闘', () => {
   it('壁に当たれば廃墟の中に残る', () => {
     const w = running();
     // 三方壁の廃墟（北向き）を原点に置き、中から北壁へ向けて強く弾く
-    const ruin = { cx: 0, cy: 0, half: P.shelterSize / 2, layout: 'u' as const, rot: 0, shaded: true };
+    const ruin = { cx: 0, cy: 0, half: P.shelterSize / 2, layout: 'u' as const, rot: 0, shaded: true, ox: 0, oy: 0, vx: 1, vy: 0 };
     w.ruins = [ruin];
     w.walls = buildWalls([ruin], [], ruin.half).filter((x) => x.kind === 'ruin');
     // 素の重さの者が、既定の強さで突き飛ばされたときの勢い
@@ -126,7 +139,7 @@ describe('夜明けの乱闘', () => {
 
   it('時間切れの瞬間、体の中心が影の外にいる者だけが焼け、生き延びた者の血が得点になる', () => {
     const w = running();
-    const ruin = { cx: 0, cy: 0, half: P.shelterSize / 2, layout: 'u' as const, rot: 0, shaded: true };
+    const ruin = { cx: 0, cy: 0, half: P.shelterSize / 2, layout: 'u' as const, rot: 0, shaded: true, ox: 0, oy: 0, vx: 1, vy: 0 };
     w.ruins = [ruin];
     place(w, 0, 0, ruin.half - 0.6, 70);
     place(w, 1, 0, ruin.half + 0.05, 90);
@@ -174,6 +187,25 @@ describe('夜明けの乱闘', () => {
       step(w, new Map(), P, DT);
     }
     expect(seen.size).toBeGreaterThan(3);
+  });
+
+  it('雲の影は朝までに流れ、奥の壁際に座り込んだ者も日なたに出される', () => {
+    const w = createWorld(2, 5);
+    w.walls = [];
+    w.phaseLeft = DT / 2;
+    step(w, new Map(), P, DT);
+    const r = w.ruins.find((x) => x.shaded)!;
+    // 白んだ直後は、流れと逆向きに半分ずれた所にある
+    expect(r.ox).toBeCloseTo(-r.vx * P.shadeDrift * 0.5, 1);
+    expect(r.oy).toBeCloseTo(-r.vy * P.shadeDrift * 0.5, 1);
+    // 流れの上手側の端（最初は影の中）に座り込む
+    place(w, 0, r.cx - r.vx * (r.half - 0.1), r.cy - r.vy * (r.half - 0.1));
+    expect(refugeOf(w.players[0], w)).toBe('ruin');
+    w.phaseLeft = DT / 2;
+    step(w, new Map(), P, DT);
+    expect(w.phase).toBe('result');
+    expect(r.ox).toBeCloseTo(r.vx * P.shadeDrift * 0.5, 1);
+    expect(w.players[0].alive).toBe(false);
   });
 
   it('夜明けは最低限の夜のあと、戦ごとにばらばらの時刻に来る', () => {

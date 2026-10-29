@@ -4,7 +4,7 @@
 // 一人称では盤面を俯瞰できないぶん、空の白み方・雲・光の柱・城の旗で、時間と行き先を読ませる。
 
 import * as THREE from 'three';
-import { ARENA_HALF, VILLAGE_RADIUS, type Wall } from './map';
+import { ARENA_HALF, VILLAGE_RADIUS, shadeZone, type Wall } from './map';
 import { BLOOD_MAX, PLAYER_RADIUS, refugeOf, type Params, type World } from './sim';
 
 export type ViewMode = 'top' | 'fps';
@@ -106,6 +106,10 @@ export class BrawlView {
   private terrain = new THREE.Group();
   private terrainKey = '';
   private ruinFloors: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
+  /** 雲の影。廃墟と同じ大きさの四角で、雲の流れに合わせて動く。この四角の中だけが助かる */
+  private shadeFloors: THREE.Mesh[] = [];
+  /** 影の流れる向きを示す矢印 */
+  private shadeArrows: THREE.Mesh[] = [];
   private skyClouds: THREE.Mesh[] = [];
   private beams: THREE.Mesh[] = [];
   private players: PlayerMesh[] = [];
@@ -221,10 +225,17 @@ export class BrawlView {
     this.updateSky(dawnOf(world, params), fps);
 
     world.ruins.forEach((r, i) => {
-      this.ruinFloors[i].material.color.setHex(r.shaded ? SHADE_COLOR : RUIN_FLOOR);
-      // 空の雲と光の柱は一人称でだけ見せる（見下ろしでは画面を塞いでしまう）
+      const z = shadeZone(r);
+      this.shadeFloors[i].visible = r.shaded;
+      this.shadeFloors[i].position.set(z.cx, 0.02, z.cy);
+      this.shadeArrows[i].visible = r.shaded;
+      this.shadeArrows[i].position.set(z.cx, 0.03, z.cy);
+      this.shadeArrows[i].rotation.set(-Math.PI / 2, 0, Math.atan2(-r.vy, r.vx));
+      // 空の雲と光の柱は一人称でだけ見せる（見下ろしでは画面を塞いでしまう）。影と一緒に流れる
       this.skyClouds[i].visible = r.shaded && fps;
+      this.skyClouds[i].position.set(z.cx, CLOUD_HEIGHT, z.cy);
       this.beams[i].visible = r.shaded && fps;
+      this.beams[i].position.set(z.cx, CLOUD_HEIGHT / 2, z.cy);
     });
 
     for (const p of world.players) {
@@ -334,6 +345,8 @@ export class BrawlView {
       (child as THREE.Mesh).geometry?.dispose();
     }
     this.ruinFloors = [];
+    this.shadeFloors = [];
+    this.shadeArrows = [];
     this.skyClouds = [];
     this.beams = [];
 
@@ -356,9 +369,24 @@ export class BrawlView {
       side: THREE.DoubleSide,
       fog: false,
     });
+    // 影の流れる向きを示す、地面に寝かせた矢印（+x 向きに作っておき、毎フレーム回す）
+    const arrowShape = new THREE.Shape();
+    arrowShape.moveTo(0.9, 0);
+    arrowShape.lineTo(-0.5, 0.6);
+    arrowShape.lineTo(-0.2, 0);
+    arrowShape.lineTo(-0.5, -0.6);
+    arrowShape.closePath();
+    const arrowMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
     for (const r of world.ruins) {
-      // 影として見せるのは廃墟の床そのもの。見えている影と、助かる範囲がぴったり一致する
       this.ruinFloors.push(floor(r.cx, r.cy, r.half * 2, RUIN_FLOOR));
+      // 雲の影。見えている四角と、助かる範囲がぴったり一致する。廃墟の壁の外へはみ出すこともある
+      const shade = floor(r.cx, r.cy, r.half * 2, SHADE_COLOR, 0.02);
+      shade.material.transparent = true;
+      shade.material.opacity = 0.85;
+      this.shadeFloors.push(shade);
+      const arrow = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape), arrowMat);
+      this.terrain.add(arrow);
+      this.shadeArrows.push(arrow);
 
       // 真上に浮かぶ雲と、そこから廃墟へ降りる青い光の柱。遠くからでも見える
       const cloud = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), cloudMat);
@@ -500,7 +528,8 @@ export function drawMinimap(canvas: HTMLCanvasElement, world: World, meId: numbe
   for (const r of world.ruins) {
     if (!r.shaded) continue;
     ctx.fillStyle = '#35d0f5';
-    ctx.fillRect(X(r.cx - r.half), X(r.cy - r.half), r.half * 2 * s, r.half * 2 * s);
+    const z = shadeZone(r);
+    ctx.fillRect(X(z.cx - z.half), X(z.cy - z.half), z.half * 2 * s, z.half * 2 * s);
   }
   const own = world.castles[meId];
   if (own) {

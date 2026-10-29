@@ -16,7 +16,7 @@ interface Settings {
 
 // 地形を作り直したので、古い調整値（夜明けまでの時間など）は持ち越さない
 // 既定値（突き飛ばし・廃墟の広さ）を変えたので、古い調整値は持ち越さない
-const SETTINGS_KEY = 'vampirehouse-brawl-settings-v5';
+const SETTINGS_KEY = 'vampirehouse-brawl-settings-v6';
 
 function loadSettings(): Settings {
   const base: Settings = { params: { ...DEFAULT_PARAMS }, latencyMs: 0, players: 4, view: 'fps' };
@@ -404,6 +404,8 @@ const KNOBS: Knob[] = [
   { key: 'villagerBlood', label: '村人ひとりの血（dL）', min: 10, max: 150, step: 10 },
   { key: 'dawnMin', label: '夜が必ず続く時間（秒）', min: 0, max: 20, step: 1 },
   { key: 'dawnMean', label: 'その先、夜明けまでの平均（秒）', min: 1, max: 20, step: 1 },
+  { key: 'shadeDrift', label: '雲の影が流れる距離（m）', min: 0, max: 6, step: 0.5 },
+  { key: 'chargeBonus', label: '駆け込みの勢い（全力で走り込んだときの上乗せ）', min: 0, max: 2, step: 0.1 },
 ];
 
 function renderPanel(): void {
